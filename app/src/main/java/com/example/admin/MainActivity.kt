@@ -90,6 +90,9 @@ fun AdminApp() {
     var receiptUri by remember { mutableStateOf<Uri?>(null) }
     var viewingReceipt by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    var manageAction by remember { mutableStateOf<String?>(null) }
+    var targetDebtName by remember { mutableStateOf<String?>(null) }
+    var editedDebtName by remember { mutableStateOf("") }
 
     fun save(next: List<Debt>) {
         debts = next
@@ -150,7 +153,101 @@ fun AdminApp() {
                         save(debts.map { if (it.name == current.name) current.copy(count = count, amount = amount, startDate = date, installments = preserved) else it })
                     },
                     onPay = { paying = it; receiptUri = null },
-                    onViewReceipt = { viewingReceipt = it }
+                    onViewReceipt = { viewingReceipt = it },
+                    onEditName = { manageAction = "edit_select" },
+                    onDeleteDebt = { manageAction = "delete_select" }
+                )
+            }
+
+            when (manageAction) {
+                "edit_select" -> AlertDialog(
+                    onDismissRequest = { manageAction = null; targetDebtName = null },
+                    title = { Text("¿Qué deuda quieres editar?") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            debts.forEach { debt ->
+                                OutlinedButton(
+                                    onClick = {
+                                        targetDebtName = debt.name
+                                        editedDebtName = debt.name
+                                        manageAction = "edit_name"
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text(debt.name) }
+                            }
+                        }
+                    },
+                    confirmButton = { TextButton(onClick = { manageAction = null }) { Text("CERRAR") } }
+                )
+                "edit_name" -> AlertDialog(
+                    onDismissRequest = { manageAction = null; targetDebtName = null },
+                    title = { Text("Editar nombre") },
+                    text = {
+                        OutlinedTextField(
+                            value = editedDebtName,
+                            onValueChange = { editedDebtName = it },
+                            label = { Text("Nuevo nombre") },
+                            singleLine = true
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val oldName = targetDebtName
+                            val newName = editedDebtName.trim()
+                            if (oldName != null && newName.isNotBlank() &&
+                                debts.none { it.name.equals(newName, ignoreCase = true) && it.name != oldName }) {
+                                save(debts.map { if (it.name == oldName) it.copy(name = newName) else it })
+                                if (selected == oldName) selected = newName
+                                manageAction = null
+                                targetDebtName = null
+                            } else {
+                                error = if (newName.isBlank()) "Escribe un nombre para la deuda." else "Ya existe una deuda con ese nombre."
+                            }
+                        }) { Text("GUARDAR") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { manageAction = null; targetDebtName = null }) { Text("CANCELAR") }
+                    }
+                )
+                "delete_select" -> AlertDialog(
+                    onDismissRequest = { manageAction = null; targetDebtName = null },
+                    title = { Text("¿Qué deuda quieres eliminar?") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            debts.forEach { debt ->
+                                OutlinedButton(
+                                    onClick = {
+                                        targetDebtName = debt.name
+                                        manageAction = "delete_confirm"
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text(debt.name) }
+                            }
+                        }
+                    },
+                    confirmButton = { TextButton(onClick = { manageAction = null }) { Text("CERRAR") } }
+                )
+                "delete_confirm" -> AlertDialog(
+                    onDismissRequest = { manageAction = null; targetDebtName = null },
+                    title = { Text("Eliminar deuda") },
+                    text = { Text("¿Seguro que deseas eliminar la deuda " + targetDebtName.orEmpty() + " y todos sus datos y cuotas?") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val nameToDelete = targetDebtName
+                            if (nameToDelete != null) {
+                                save(debts.filterNot { it.name == nameToDelete })
+                                if (selected == nameToDelete) selected = null
+                            }
+                            manageAction = null
+                            targetDebtName = null
+                        }) { Text("ACEPTAR") }
+                    },
+                    dismissButton = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = { manageAction = null; targetDebtName = null }) { Text("RECHAZAR") }
+                            TextButton(onClick = { manageAction = null; targetDebtName = null }) { Text("×", fontSize = 22.sp) }
+                        }
+                    }
                 )
             }
 
@@ -238,7 +335,9 @@ private fun DebtDetail(
     debt: Debt,
     onEdit: (Int, Long, String) -> Unit,
     onPay: (Installment) -> Unit,
-    onViewReceipt: (String) -> Unit
+    onViewReceipt: (String) -> Unit,
+    onEditName: () -> Unit,
+    onDeleteDebt: () -> Unit
 ) {
     var count by remember(debt.name) { mutableStateOf(if (debt.count == 0) "" else debt.count.toString()) }
     var amount by remember(debt.name) { mutableStateOf(if (debt.amount == 0L) "" else money(debt.amount)) }
@@ -247,7 +346,13 @@ private fun DebtDetail(
 
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text(debt.name, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+            Text(debt.name, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.weight(1f))
+            TextButton(onClick = onEditName, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+                Text("EDITAR", fontSize = 11.sp)
+            }
+            TextButton(onClick = onDeleteDebt, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+                Text("ELIMINAR", fontSize = 11.sp, color = Color.Red)
+            }
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
             item {
