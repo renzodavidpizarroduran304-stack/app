@@ -7,6 +7,9 @@ import android.content.ClipboardManager
 import android.net.Uri
 import android.widget.Toast
 import android.os.Bundle
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -62,6 +65,8 @@ data class Installment(
     val paid: Boolean = false,
     val receipt: String? = null
 )
+data class ReceiptTarget(val debtName: String, val installmentId: String, val path: String)
+
 data class Debt(
     val name: String,
     val count: Int = 0,
@@ -88,7 +93,9 @@ fun AdminApp() {
     var showConfig by remember { mutableStateOf(false) }
     var paying by remember { mutableStateOf<Installment?>(null) }
     var receiptUri by remember { mutableStateOf<Uri?>(null) }
-    var viewingReceipt by remember { mutableStateOf<String?>(null) }
+    var viewingReceipt by remember { mutableStateOf<ReceiptTarget?>(null) }
+    var showCreateDebt by remember { mutableStateOf(false) }
+    var newDebtName by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var manageAction by remember { mutableStateOf<String?>(null) }
     var targetDebtName by remember { mutableStateOf<String?>(null) }
@@ -124,6 +131,9 @@ fun AdminApp() {
                             Text("ADMIN", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink)
                             Text("Control de deudas", color = Muted, fontSize = 14.sp)
                         }
+                        IconButton(onClick = { newDebtName = ""; showCreateDebt = true }) {
+                            Text("+", fontSize = 30.sp, fontWeight = FontWeight.Normal, color = Blue)
+                        }
                         TextButton(onClick = { showConfig = true }) { Text("CONFIGURAR") }
                     }
                     Spacer(Modifier.height(22.dp))
@@ -153,7 +163,9 @@ fun AdminApp() {
                         save(debts.map { if (it.name == current.name) current.copy(count = count, amount = amount, startDate = date, installments = preserved) else it })
                     },
                     onPay = { paying = it; receiptUri = null },
-                    onViewReceipt = { viewingReceipt = it },
+                    onViewReceipt = { installment ->
+                        installment.receipt?.let { path -> viewingReceipt = ReceiptTarget(current.name, installment.id, path) }
+                    },
                     onEditName = { manageAction = "edit_select" },
                     onDeleteDebt = { manageAction = "delete_select" }
                 )
@@ -251,6 +263,26 @@ fun AdminApp() {
                 )
             }
 
+            if (showCreateDebt) {
+                AlertDialog(
+                    onDismissRequest = { showCreateDebt = false },
+                    title = { Text("Crear nueva deuda") },
+                    text = {
+                        OutlinedTextField(value = newDebtName, onValueChange = { newDebtName = it },
+                            label = { Text("Nombre de la deuda") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val name = newDebtName.trim()
+                            if (name.isBlank()) error = "Escribe un nombre para la deuda."
+                            else if (debts.any { it.name.equals(name, ignoreCase = true) }) error = "Ya existe una deuda con ese nombre."
+                            else { save(debts + Debt(name)); showCreateDebt = false; newDebtName = "" }
+                        }) { Text("CREAR") }
+                    },
+                    dismissButton = { TextButton(onClick = { showCreateDebt = false }) { Text("CANCELAR") } }
+                )
+            }
+
             if (showConfig) {
                 AlertDialog(
                     onDismissRequest = { showConfig = false },
@@ -289,6 +321,12 @@ fun AdminApp() {
                                             if (row.id == installment.id && !row.paid) row.copy(paid = true, receipt = file) else row
                                         })
                                     })
+                                    val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        vibrator.vibrate(VibrationEffect.createOneShot(140, VibrationEffect.DEFAULT_AMPLITUDE))
+                                    } else {
+                                        @Suppress("DEPRECATION") vibrator.vibrate(140)
+                                    }
                                     paying = null
                                     receiptUri = null
                                 } else error = "No se pudo guardar el comprobante. Inténtalo nuevamente."
@@ -305,8 +343,16 @@ fun AdminApp() {
                 })
             }
 
-            viewingReceipt?.let { path ->
-                ReceiptDialog(path = path, onClose = { viewingReceipt = null })
+            viewingReceipt?.let { target ->
+                ReceiptDialog(path = target.path, onClose = { viewingReceipt = null }, onSaveReplacement = { newPath ->
+                    save(debts.map { debt ->
+                        if (debt.name != target.debtName) debt else debt.copy(installments = debt.installments.map { row ->
+                            if (row.id == target.installmentId) row.copy(receipt = newPath) else row
+                        })
+                    })
+                    if (target.path != newPath) File(target.path).delete()
+                    viewingReceipt = target.copy(path = newPath)
+                })
             }
             }
         }
@@ -335,7 +381,7 @@ private fun DebtDetail(
     debt: Debt,
     onEdit: (Int, Long, String) -> Unit,
     onPay: (Installment) -> Unit,
-    onViewReceipt: (String) -> Unit,
+    onViewReceipt: (Installment) -> Unit,
     onEditName: () -> Unit,
     onDeleteDebt: () -> Unit
 ) {
@@ -398,7 +444,7 @@ private fun DebtDetail(
                         Text(installment.date, color = Muted, fontSize = 13.sp)
                         if (installment.paid) {
                             Text("PAGADA", color = Color(0xFF23834B), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                            if (installment.receipt != null) TextButton(onClick = { onViewReceipt(installment.receipt) }) { Text("VER COMPROBANTE") }
+                            if (installment.receipt != null) TextButton(onClick = { onViewReceipt(installment) }) { Text("VER COMPROBANTE") }
                         } else {
                             Button(onClick = { onPay(installment) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
                                 Text("CANCELAR")
@@ -412,10 +458,17 @@ private fun DebtDetail(
 }
 
 @Composable
-private fun ReceiptDialog(path: String, onClose: () -> Unit) {
+private fun ReceiptDialog(path: String, onClose: () -> Unit, onSaveReplacement: (String) -> Unit) {
     val context = LocalContext.current
-    val bitmap = remember(path) {
-        runCatching { BitmapFactory.decodeFile(path)?.asImageBitmap() }.getOrNull()
+    var replacementUri by remember(path) { mutableStateOf<Uri?>(null) }
+    var acceptedReplacementPath by remember(path) { mutableStateOf<String?>(null) }
+    val replacementPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        replacementUri = uri
+        acceptedReplacementPath = null
+    }
+    val displayedPath = acceptedReplacementPath ?: path
+    val bitmap = remember(displayedPath) {
+        runCatching { BitmapFactory.decodeFile(displayedPath)?.asImageBitmap() }.getOrNull()
     }
     val downloadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/jpeg")) { destination ->
         if (destination != null) {
@@ -436,7 +489,27 @@ private fun ReceiptDialog(path: String, onClose: () -> Unit) {
                 if (bitmap != null) {
                     Image(bitmap, contentDescription = "Comprobante de pago", modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp), contentScale = ContentScale.Fit)
                 } else { Text("No se pudo abrir el comprobante guardado.") }
+                if (replacementUri != null && acceptedReplacementPath == null) {
+                    Button(onClick = {
+                        val newPath = copyReceipt(context, replacementUri!!)
+                        if (newPath != null) acceptedReplacementPath = newPath
+                        else Toast.makeText(context, "No se pudo preparar el nuevo comprobante", Toast.LENGTH_LONG).show()
+                    }, modifier = Modifier.fillMaxWidth()) { Text("ACEPTAR") }
+                }
+                if (acceptedReplacementPath != null) {
+                    Button(onClick = {
+                        val newPath = acceptedReplacementPath ?: return@Button
+                        onSaveReplacement(newPath)
+                        replacementUri = null
+                        acceptedReplacementPath = null
+                    }, modifier = Modifier.fillMaxWidth()) { Text("GUARDAR COMPROBANTE") }
+                }
                 Button(onClick = { downloadLauncher.launch("comprobante.jpg") }, modifier = Modifier.fillMaxWidth()) { Text("DESCARGAR") }
+                if (acceptedReplacementPath == null && replacementUri == null) {
+                    Button(onClick = { replacementPicker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
+                        Text("AÑADIR NUEVO COMPROBANTE")
+                    }
+                }
                 Button(onClick = {
                     runCatching {
                         val uri = receiptContentUri()
