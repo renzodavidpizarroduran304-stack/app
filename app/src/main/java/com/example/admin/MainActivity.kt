@@ -421,12 +421,12 @@ private fun ReceiptDialog(path: String, onClose: () -> Unit) {
         if (destination != null) {
             runCatching {
                 val output = context.contentResolver.openOutputStream(destination) ?: error("No se pudo abrir el destino")
-                File(path).inputStream().use { input -> output.use { input.copyTo(it) } }
+                File(displayedPath).inputStream().use { input -> output.use { input.copyTo(it) } }
             }.onSuccess { Toast.makeText(context, "Comprobante descargado", Toast.LENGTH_SHORT).show() }
              .onFailure { Toast.makeText(context, "No se pudo descargar el comprobante", Toast.LENGTH_LONG).show() }
         }
     }
-    fun receiptContentUri(): Uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", File(path))
+    fun receiptContentUri(): Uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", File(displayedPath))
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Card(Modifier.fillMaxWidth(0.94f), shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
