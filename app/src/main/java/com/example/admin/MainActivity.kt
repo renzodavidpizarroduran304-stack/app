@@ -124,7 +124,7 @@ fun AdminApp() {
     var debts by remember { mutableStateOf(loadDebts(context)) }
     var referenceDate by remember {
         mutableStateOf(context.getSharedPreferences("admin_data", Context.MODE_PRIVATE)
-            .getString("reference_date", LocalDate.now().format(DateFmt)) ?: LocalDate.now().format(DateFmt))
+            .DebtNotifications.getReferenceToday(context).format(DateFmt))
     }
     var referenceDateDraft by remember { mutableStateOf(referenceDate) }
     var referenceDateError by remember { mutableStateOf(false) }
@@ -206,7 +206,7 @@ fun AdminApp() {
                                         referenceDateDraft = referenceDate
                                         referenceDateError = false
                                         context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).edit()
-                                            .putString("reference_date", referenceDate).apply()
+                                            .putString("reference_date", referenceDate).putLong("reference_date_anchor", System.currentTimeMillis()).apply()
                                     }
                                 }) { Text("GUARDAR") }
                             }
