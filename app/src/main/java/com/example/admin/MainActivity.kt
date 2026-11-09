@@ -123,8 +123,7 @@ fun AdminApp() {
     val context = LocalContext.current
     var debts by remember { mutableStateOf(loadDebts(context)) }
     var referenceDate by remember {
-        mutableStateOf(context.getSharedPreferences("admin_data", Context.MODE_PRIVATE)
-            .DebtNotifications.getReferenceToday(context).format(DateFmt))
+        mutableStateOf(DebtNotifications.getReferenceToday(context).format(DateFmt))
     }
     var referenceDateDraft by remember { mutableStateOf(referenceDate) }
     var referenceDateError by remember { mutableStateOf(false) }
