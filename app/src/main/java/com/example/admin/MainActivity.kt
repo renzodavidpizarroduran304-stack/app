@@ -1,9 +1,14 @@
 package com.example.admin
 
 import android.content.Context
+import android.content.Intent
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.net.Uri
+import android.widget.Toast
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
@@ -90,6 +96,8 @@ fun AdminApp() {
         persistDebts(context, next)
     }
 
+    BackHandler(enabled = selected != null) { selected = null }
+
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         receiptUri = uri
     }
@@ -130,7 +138,6 @@ fun AdminApp() {
             } else {
                 DebtDetail(
                     debt = current,
-                    onBack = { selected = null },
                     onEdit = { count, amount, date ->
                         val oldPaid = current.installments.filter { it.paid }
                         val generated = generateInstallments(count, amount, date)
@@ -227,7 +234,6 @@ private fun DebtCard(debt: Debt, onClick: () -> Unit) {
 @Composable
 private fun DebtDetail(
     debt: Debt,
-    onBack: () -> Unit,
     onEdit: (Int, Long, String) -> Unit,
     onPay: (Installment) -> Unit,
     onViewReceipt: (String) -> Unit
@@ -238,9 +244,7 @@ private fun DebtDetail(
     var dateError by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("← VOLVER") }
-            Spacer(Modifier.weight(1f))
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Text(debt.name, fontWeight = FontWeight.Bold, fontSize = 20.sp)
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
@@ -302,18 +306,50 @@ private fun DebtDetail(
 
 @Composable
 private fun ReceiptDialog(path: String, onClose: () -> Unit) {
+    val context = LocalContext.current
     val bitmap = remember(path) {
         runCatching { BitmapFactory.decodeFile(path)?.asImageBitmap() }.getOrNull()
     }
+    val downloadLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/jpeg")) { destination ->
+        if (destination != null) {
+            runCatching {
+                val output = context.contentResolver.openOutputStream(destination) ?: error("No se pudo abrir el destino")
+                File(path).inputStream().use { input -> output.use { input.copyTo(it) } }
+            }.onSuccess { Toast.makeText(context, "Comprobante descargado", Toast.LENGTH_SHORT).show() }
+             .onFailure { Toast.makeText(context, "No se pudo descargar el comprobante", Toast.LENGTH_LONG).show() }
+        }
+    }
+    fun receiptContentUri(): Uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", File(path))
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Card(Modifier.fillMaxWidth(0.94f), shape = RoundedCornerShape(16.dp)) {
-            Column(Modifier.padding(12.dp)) {
-                if (bitmap != null) {
-                    Image(bitmap, contentDescription = "Comprobante de pago", modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp), contentScale = ContentScale.Fit)
-                } else {
-                    Text("No se pudo abrir el comprobante guardado.")
+            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onClose) { Text("×", fontSize = 28.sp) }
                 }
-                TextButton(onClick = onClose, modifier = Modifier.align(Alignment.End)) { Text("Cerrar") }
+                if (bitmap != null) {
+                    Image(bitmap, contentDescription = "Comprobante de pago", modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp), contentScale = ContentScale.Fit)
+                } else { Text("No se pudo abrir el comprobante guardado.") }
+                Button(onClick = { downloadLauncher.launch("comprobante.jpg") }, modifier = Modifier.fillMaxWidth()) { Text("DESCARGAR") }
+                Button(onClick = {
+                    runCatching {
+                        val uri = receiptContentUri()
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newUri(context.contentResolver, "Comprobante", uri))
+                        Toast.makeText(context, "Imagen copiada", Toast.LENGTH_SHORT).show()
+                    }.onFailure { Toast.makeText(context, "No se pudo copiar la imagen", Toast.LENGTH_LONG).show() }
+                }, modifier = Modifier.fillMaxWidth()) { Text("COPIAR IMAGEN") }
+                Button(onClick = {
+                    runCatching {
+                        val uri = receiptContentUri()
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "image/*"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            clipData = ClipData.newUri(context.contentResolver, "Comprobante", uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Compartir comprobante"))
+                    }.onFailure { Toast.makeText(context, "No se pudo compartir el comprobante", Toast.LENGTH_LONG).show() }
+                }, modifier = Modifier.fillMaxWidth()) { Text("COMPARTIR") }
             }
         }
     }
