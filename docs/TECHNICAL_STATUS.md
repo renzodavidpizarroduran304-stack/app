@@ -19,6 +19,7 @@ Rama revisada: `admin-app`.
 - Persistencia de deudas como JSON en `SharedPreferences`.
 - Visor de comprobante con X para cerrar, botón DESCARGAR mediante selector de guardado de Android, COPIAR IMAGEN al portapapeles y COMPARTIR mediante el menú nativo de Android (cambios de código recién enviados; falta probarlos en el emulador).
 - FileProvider configurado para compartir de forma segura los archivos de comprobantes.
+- Contenido principal envuelto con `statusBarsPadding()` y `navigationBarsPadding()` para mantener la interfaz fuera de los iconos superiores y la barra de navegación; falta validación visual en dispositivos.
 
 ## Confirmado por el usuario en la sesión de trabajo
 
