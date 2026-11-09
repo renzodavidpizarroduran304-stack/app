@@ -12,6 +12,8 @@ import androidx.core.app.NotificationCompat
 import org.json.JSONArray
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.time.format.DateTimeFormatter
 
 object DebtNotifications {
@@ -21,6 +23,17 @@ object DebtNotifications {
     private const val BADGE_NOTIFICATION_ID = 5202
     private const val REMINDER_BASE_ID = 5300
     private val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy")
+
+    fun getReferenceToday(context: Context): LocalDate {
+        val prefs = context.getSharedPreferences("admin_data", Context.MODE_PRIVATE)
+        val base = runCatching { LocalDate.parse(prefs.getString("reference_date", null), formatter) }
+            .getOrNull() ?: LocalDate.now()
+        val anchorMillis = prefs.getLong("reference_date_anchor", 0L)
+        if (anchorMillis <= 0L) return base
+        val anchorDate = Instant.ofEpochMilli(anchorMillis).atZone(ZoneId.systemDefault()).toLocalDate()
+        val elapsedDays = ChronoUnit.DAYS.between(anchorDate, LocalDate.now()).coerceAtLeast(0)
+        return base.plusDays(elapsedDays)
+    }
 
     fun createChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= 26) {
@@ -65,7 +78,7 @@ object DebtNotifications {
 
     fun checkTomorrowAndReschedule(context: Context) {
         createChannels(context)
-        val tomorrow = LocalDate.now().plusDays(1)
+        val tomorrow = getReferenceToday(context).plusDays(1)
         val raw = context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).getString("debts", null)
         if (raw != null) {
             runCatching {
@@ -100,7 +113,7 @@ object DebtNotifications {
         createChannels(context)
         val count = debts?.sumOf { debt ->
             debt.installments.count { row ->
-                !row.paid && (runCatching { LocalDate.parse(row.date, formatter) }.getOrNull()?.isBefore(LocalDate.now()) == true)
+                !row.paid && (runCatching { LocalDate.parse(row.date, formatter) }.getOrNull()?.isBefore(getReferenceToday(context)) == true)
             }
         } ?: countOverdueFromStorage(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -132,7 +145,7 @@ object DebtNotifications {
                 for (j in 0 until rows.length()) {
                     val row = rows.getJSONObject(j)
                     val date = runCatching { LocalDate.parse(row.optString("date"), formatter) }.getOrNull()
-                    if (!row.optBoolean("paid", false) && date?.isBefore(LocalDate.now()) == true) count++
+                    if (!row.optBoolean("paid", false) && date?.isBefore(getReferenceToday(context)) == true) count++
                 }
             }
             count
