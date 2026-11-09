@@ -112,6 +112,7 @@ fun AdminApp() {
         )
     ) {
         Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F9FB)) {
+            Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             val current = debts.firstOrNull { it.name == selected }
             if (current == null) {
                 Column(Modifier.fillMaxSize().padding(20.dp)) {
@@ -209,6 +210,7 @@ fun AdminApp() {
 
             viewingReceipt?.let { path ->
                 ReceiptDialog(path = path, onClose = { viewingReceipt = null })
+            }
             }
         }
     }
