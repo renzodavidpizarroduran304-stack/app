@@ -17,7 +17,8 @@ Rama revisada: `admin-app`.
 - Selección de imagen para comprobante y copia a `filesDir/receipts`.
 - Pago con validación de comprobante obligatorio y mensaje solicitado.
 - Persistencia de deudas como JSON en `SharedPreferences`.
-- Visualización básica de imagen de comprobante en un diálogo.
+- Visor de comprobante con X para cerrar, botón DESCARGAR mediante selector de guardado de Android, COPIAR IMAGEN al portapapeles y COMPARTIR mediante el menú nativo de Android (cambios de código recién enviados; falta probarlos en el emulador).
+- FileProvider configurado para compartir de forma segura los archivos de comprobantes.
 
 ## Confirmado por el usuario en la sesión de trabajo
 
@@ -25,7 +26,7 @@ Rama revisada: `admin-app`.
 - La APK todavía no se ha validado funcionalmente en el emulador.
 - Se estaba creando un emulador nuevo Small Phone, Android 14 (API 34), Google Play, x86_64, resolución 720×1280, 320 dpi.
 - El emulador anterior Android 17/API 37 presentó bloqueos de Pixel Launcher.
-- El usuario indicó que la descarga de la imagen del nuevo emulador terminó y que el dispositivo Small Phone aparece en Device Manager; después inició su arranque. No consta todavía que haya llegado a la pantalla de inicio ni que ADMIN se haya instalado y probado.
+- El usuario confirmó que Small Phone llegó a la pantalla principal de Android, que ADMIN se abrió en el emulador y que las cuatro tarjetas aparecen correctamente. La navegación y el rendimiento aún requieren validación.
 
 ## Pendiente o no verificado
 
@@ -35,7 +36,8 @@ Rama revisada: `admin-app`.
 - Verificar el comportamiento de las fechas de fin de mes y años bisiestos.
 - Proteger explícitamente las cuotas pagadas al editar una deuda; el código actual conserva pagos por número de cuota al regenerar, pero no muestra una confirmación previa ni garantiza que todos los cambios sean seguros.
 - Añadir historial consultable por deuda.
-- Añadir zoom y acciones del sistema para compartir, copiar, guardar o exportar comprobantes.
+- Probar en el emulador las acciones DESCARGAR, COPIAR IMAGEN y COMPARTIR, incluida la recepción de la imagen en WhatsApp u otra aplicación.
+- Verificar que el botón/gesto Atrás del sistema vuelve de la pantalla de deuda a la pantalla principal sin botón interno.
 - Evaluar migrar el almacenamiento JSON en SharedPreferences a Room, con migración segura de datos.
 - Añadir pruebas unitarias y de interfaz.
 - Verificar manejo de errores, accesibilidad, rotación y ciclo de vida.
