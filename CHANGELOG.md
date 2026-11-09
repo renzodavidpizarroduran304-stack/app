@@ -16,3 +16,5 @@ Este archivo registra cambios relevantes del proyecto. Añadir una entrada por c
 - Se agregó FileProvider con acceso limitado a la carpeta privada de comprobantes para copiar y compartir imágenes.
 - Se eliminó el botón interno «VOLVER» de la pantalla de deuda y se agregó navegación con el botón/gesto Atrás de Android.
 - Cambios enviados a la rama `admin-app`; compilación e instalación de esta actualización aún pendientes de verificar.
+
+- Se ajustó el contenido de las pantallas para respetar las áreas seguras superior e inferior del teléfono; los controles ya no deben quedar debajo de los iconos de estado ni de la barra de navegación. Pendiente de comprobar en el emulador y en un teléfono físico.
