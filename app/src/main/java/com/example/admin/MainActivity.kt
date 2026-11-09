@@ -7,6 +7,10 @@ import android.content.ClipboardManager
 import android.net.Uri
 import android.widget.Toast
 import android.os.Bundle
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.pm.PackageManager
+import android.provider.Settings
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -36,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.text.input.ImeAction
 import androidx.core.content.FileProvider
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.layout.ContentScale
@@ -51,9 +56,12 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
-private val Blue = Color(0xFF55B8E8)
-private val Ink = Color(0xFF20252B)
-private val Muted = Color(0xFF737B84)
+private val Blue = Color(0xFF65BCEB)
+private val Ink = Color(0xFFE8EDF3)
+private val Muted = Color(0xFFA0AAB6)
+private val BgDark = Color(0xFF101419)
+private val CardDark = Color(0xFF1B232C)
+private val SurfaceDark = Color(0xFF222D38)
 private val DateFmt = DateTimeFormatter.ofPattern("dd/MM/yyyy")
 private val Names = listOf("ISUR", "CAJA", "BCP", "KAELA")
 
@@ -81,6 +89,11 @@ data class Debt(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DebtNotifications.createChannels(this)
+        DebtNotifications.scheduleDailyCheck(this)
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 4101)
+        }
         setContent { AdminApp() }
     }
 }
@@ -89,6 +102,12 @@ class MainActivity : ComponentActivity() {
 fun AdminApp() {
     val context = LocalContext.current
     var debts by remember { mutableStateOf(loadDebts(context)) }
+    var referenceDate by remember {
+        mutableStateOf(context.getSharedPreferences("admin_data", Context.MODE_PRIVATE)
+            .getString("reference_date", LocalDate.now().format(DateFmt)) ?: LocalDate.now().format(DateFmt))
+    }
+    var referenceDateDraft by remember { mutableStateOf(referenceDate) }
+    var referenceDateError by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<String?>(null) }
     var showConfig by remember { mutableStateOf(false) }
     var paying by remember { mutableStateOf<Installment?>(null) }
@@ -104,6 +123,12 @@ fun AdminApp() {
     fun save(next: List<Debt>) {
         debts = next
         persistDebts(context, next)
+        DebtNotifications.updateOverdueBadge(context, next)
+    }
+
+    LaunchedEffect(debts) {
+        DebtNotifications.updateOverdueBadge(context, debts)
+        DebtNotifications.scheduleDailyCheck(context)
     }
 
     BackHandler(enabled = selected != null) { selected = null }
@@ -113,15 +138,18 @@ fun AdminApp() {
     }
 
     MaterialTheme(
-        colorScheme = lightColorScheme(
+        colorScheme = darkColorScheme(
             primary = Blue,
-            onPrimary = Color.White,
-            background = Color(0xFFF7F9FB),
-            surface = Color.White,
-            onSurface = Ink
+            onPrimary = Color(0xFF08131B),
+            background = BgDark,
+            surface = CardDark,
+            onSurface = Ink,
+            secondary = Blue,
+            surfaceVariant = SurfaceDark,
+            onSurfaceVariant = Muted
         )
     ) {
-        Surface(Modifier.fillMaxSize(), color = Color(0xFFF7F9FB)) {
+        Surface(Modifier.fillMaxSize(), color = BgDark) {
             Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             val current = debts.firstOrNull { it.name == selected }
             if (current == null) {
@@ -136,13 +164,44 @@ fun AdminApp() {
                         }
                         TextButton(onClick = { showConfig = true }) { Text("CONFIGURAR") }
                     }
-                    Spacer(Modifier.height(22.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardDark)) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("FECHA ACTUAL", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = referenceDateDraft,
+                                    onValueChange = { referenceDateDraft = it; referenceDateError = false },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text("dd/MM/yyyy") },
+                                    singleLine = true,
+                                    isError = referenceDateError,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done)
+                                )
+                                TextButton(onClick = {
+                                    val parsed = runCatching { LocalDate.parse(referenceDateDraft, DateFmt) }.getOrNull()
+                                    if (parsed == null) referenceDateError = true
+                                    else {
+                                        referenceDate = parsed.format(DateFmt)
+                                        referenceDateDraft = referenceDate
+                                        referenceDateError = false
+                                        context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).edit()
+                                            .putString("reference_date", referenceDate).apply()
+                                    }
+                                }) { Text("GUARDAR") }
+                            }
+                            val annualDate = runCatching { LocalDate.parse(referenceDate, DateFmt) }.getOrNull() ?: LocalDate.now()
+                            Text("Periodo anual: 01/01/" + annualDate.year + " – 31/12/" + annualDate.year, color = Muted, fontSize = 12.sp)
+                            if (referenceDateError) Text("Fecha no válida. Usa dd/MM/yyyy.", color = Color(0xFFFF6B6B), fontSize = 12.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
                     debts.forEach { debt ->
                         DebtCard(debt) { selected = debt.name }
                         Spacer(Modifier.height(12.dp))
                     }
                     Spacer(Modifier.weight(1f))
-                    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFEAF6FC))) {
+                    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
                         Column(Modifier.fillMaxWidth().padding(20.dp)) {
                             Text("DEUDA TOTAL", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                             Text("S/ " + money(debts.sumOf { it.pending }), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Ink)
@@ -364,11 +423,17 @@ private fun DebtCard(debt: Debt, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = CardDark),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(Modifier.padding(18.dp)) {
-            Text(debt.name, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink)
+            val overdueCount = debt.installments.count { row ->
+                !row.paid && (runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull()?.isBefore(LocalDate.now()) == true)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(debt.name, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.weight(1f))
+                if (overdueCount > 0) Text("! " + overdueCount, color = Color(0xFFFF4D5A), fontWeight = FontWeight.Bold)
+            }
             Spacer(Modifier.height(8.dp))
             Text("S/ ${money(debt.pending)}", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = Ink)
             Text("Deuda pendiente", color = Muted, fontSize = 13.sp)
@@ -441,9 +506,14 @@ private fun DebtDetail(
                                 textDecoration = if (installment.paid) TextDecoration.LineThrough else TextDecoration.None,
                                 color = if (installment.paid) Color.Red else Ink)
                         }
-                        Text(installment.date, color = Muted, fontSize = 13.sp)
+                        val dueDate = runCatching { LocalDate.parse(installment.date, DateFmt) }.getOrNull()
+                        val overdue = !installment.paid && dueDate != null && dueDate.isBefore(LocalDate.now())
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(installment.date, color = Muted, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            if (overdue) Text("VENCIDA", color = Color(0xFFFF4D5A), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
                         if (installment.paid) {
-                            Text("PAGADA", color = Color(0xFF23834B), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                            Text("PAGADA", color = Color(0xFF55D68B), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                             if (installment.receipt != null) TextButton(onClick = { onViewReceipt(installment) }) { Text("VER COMPROBANTE") }
                         } else {
                             Button(onClick = { onPay(installment) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
