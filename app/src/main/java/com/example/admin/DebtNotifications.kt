@@ -24,16 +24,7 @@ object DebtNotifications {
     private const val REMINDER_BASE_ID = 5300
     private val formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy")
 
-    fun getReferenceToday(context: Context): LocalDate {
-        val prefs = context.getSharedPreferences("admin_data", Context.MODE_PRIVATE)
-        val base = runCatching { LocalDate.parse(prefs.getString("reference_date", null), formatter) }
-            .getOrNull() ?: LocalDate.now()
-        val anchorMillis = prefs.getLong("reference_date_anchor", 0L)
-        if (anchorMillis <= 0L) return base
-        val anchorDate = Instant.ofEpochMilli(anchorMillis).atZone(ZoneId.systemDefault()).toLocalDate()
-        val elapsedDays = ChronoUnit.DAYS.between(anchorDate, LocalDate.now()).coerceAtLeast(0)
-        return base.plusDays(elapsedDays)
-    }
+    fun getReferenceToday(context: Context): LocalDate = LocalDate.now()
 
     fun createChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= 26) {
