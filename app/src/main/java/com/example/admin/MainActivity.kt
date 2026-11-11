@@ -314,7 +314,6 @@ fun AdminApp() {
                         installment.receipt?.let { path -> viewingReceipt = ReceiptTarget(current.name, installment.id, path) }
                     },
                     onEditName = { manageAction = "edit_select" },
-                    onDeleteDebt = { manageAction = "delete_select" },
                     onAddAdvance = { showAdvanceDialog = true; advanceAmount = ""; advanceReceiptUri = null },
                     onViewAdvanceReceipt = { advance -> viewingAdvanceReceipt = AdvanceReceiptTarget(current.name, advance.id, advance.receipt) },
                     onDeleteAdvance = { advance -> advanceToDelete = advance }
@@ -441,46 +440,6 @@ fun AdminApp() {
                     },
                     dismissButton = {
                         TextButton(onClick = { manageAction = null; targetDebtName = null }) { Text("CANCELAR") }
-                    }
-                )
-                "delete_select" -> AlertDialog(
-                    onDismissRequest = { manageAction = null; targetDebtName = null },
-                    title = { Text("¿Qué deuda quieres eliminar?") },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            debts.forEach { debt ->
-                                OutlinedButton(
-                                    onClick = {
-                                        targetDebtName = debt.name
-                                        manageAction = "delete_confirm"
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) { Text(debt.name) }
-                            }
-                        }
-                    },
-                    confirmButton = { TextButton(onClick = { manageAction = null }) { Text("CERRAR") } }
-                )
-                "delete_confirm" -> AlertDialog(
-                    onDismissRequest = { manageAction = null; targetDebtName = null },
-                    title = { Text("Eliminar deuda") },
-                    text = { Text("¿Seguro que deseas eliminar la deuda " + targetDebtName.orEmpty() + " y todos sus datos y cuotas?") },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            val nameToDelete = targetDebtName
-                            if (nameToDelete != null) {
-                                save(debts.filterNot { it.name == nameToDelete })
-                                if (selected == nameToDelete) selected = null
-                            }
-                            manageAction = null
-                            targetDebtName = null
-                        }) { Text("ACEPTAR") }
-                    },
-                    dismissButton = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = { manageAction = null; targetDebtName = null }) { Text("RECHAZAR") }
-                            TextButton(onClick = { manageAction = null; targetDebtName = null }) { Text("×", fontSize = 22.sp) }
-                        }
                     }
                 )
             }
@@ -717,7 +676,6 @@ private fun DebtDetail(
     onPay: (Installment) -> Unit,
     onViewReceipt: (Installment) -> Unit,
     onEditName: () -> Unit,
-    onDeleteDebt: () -> Unit,
     onAddAdvance: () -> Unit,
     onViewAdvanceReceipt: (Advance) -> Unit,
     onDeleteAdvance: (Advance) -> Unit
@@ -733,9 +691,6 @@ private fun DebtDetail(
             Text(debt.name, fontWeight = FontWeight.Bold, fontSize = 20.sp, modifier = Modifier.weight(1f))
             TextButton(onClick = onEditName, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
                 Text("EDITAR", fontSize = 11.sp)
-            }
-            TextButton(onClick = onDeleteDebt, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
-                Text("ELIMINAR", fontSize = 11.sp, color = Color.Red)
             }
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
