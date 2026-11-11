@@ -27,8 +27,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.blur
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -38,10 +41,13 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.Canvas
 import kotlin.math.cos
@@ -157,7 +163,19 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AdminApp() {
     val context = LocalContext.current
-    var debts by remember { mutableStateOf(loadDebts(context)) }
+    var debts by remember { mutableStateOf<List<Debt>>(emptyList()) }
+    var loadingProgress by remember { mutableFloatStateOf(0f) }
+    var isLoading by remember { mutableStateOf(true) }
+
+    LaunchedEffect(context) {
+        loadingProgress = 0.12f
+        val loadedDebts = withContext(Dispatchers.IO) { loadDebts(context) }
+        loadingProgress = 0.82f
+        debts = loadedDebts
+        loadingProgress = 1f
+        delay(220)
+        isLoading = false
+    }
     var showSizeSettings by remember { mutableStateOf(false) }
     var cardSizeLevel by remember { mutableIntStateOf(context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).getInt("card_size_level", 5).coerceIn(1, 10)) }
     var selectedDebtNames by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -184,9 +202,11 @@ fun AdminApp() {
         DebtNotifications.updateOverdueBadge(context, next)
     }
 
-    LaunchedEffect(debts) {
-        DebtNotifications.updateOverdueBadge(context, debts)
-        DebtNotifications.scheduleDailyCheck(context)
+    LaunchedEffect(debts, isLoading) {
+        if (!isLoading) {
+            DebtNotifications.updateOverdueBadge(context, debts)
+            DebtNotifications.scheduleDailyCheck(context)
+        }
     }
 
     BackHandler(enabled = selected != null || selectedDebtNames.isNotEmpty()) {
@@ -573,17 +593,31 @@ fun AdminApp() {
                 })
             }
             viewingReceipt?.let { target ->
-                ReceiptDialog(path = target.path, onClose = { viewingReceipt = null }, onSaveReplacement = { newPath ->
-                    save(debts.map { debt ->
-                        if (debt.name != target.debtName) debt else debt.copy(installments = debt.installments.map { row ->
-                            if (row.id == target.installmentId) row.copy(receipt = newPath) else row
+                ReceiptDialog(
+                    path = target.path,
+                    onClose = { viewingReceipt = null },
+                    onSaveReplacement = { newPath ->
+                        save(debts.map { debt ->
+                            if (debt.name != target.debtName) debt else debt.copy(installments = debt.installments.map { row ->
+                                if (row.id == target.installmentId) row.copy(receipt = newPath) else row
+                            })
                         })
-                    })
-                    if (target.path != newPath) File(target.path).delete()
-                    viewingReceipt = target.copy(path = newPath)
-                })
+                        if (target.path != newPath) File(target.path).delete()
+                        viewingReceipt = target.copy(path = newPath)
+                    },
+                    onDeleteReceipt = {
+                        save(debts.map { debt ->
+                            if (debt.name != target.debtName) debt else debt.copy(installments = debt.installments.map { row ->
+                                if (row.id == target.installmentId) row.copy(paid = false, receipt = null) else row
+                            })
+                        })
+                        File(target.path).delete()
+                        viewingReceipt = null
+                    }
+                )
             }
 
+            if (isLoading) LoadingScreen(progress = loadingProgress)
             }
         }
     }
@@ -796,8 +830,16 @@ private fun DebtDetail(
 }
 
 @Composable
-private fun ReceiptDialog(path: String, onClose: () -> Unit, onSaveReplacement: (String) -> Unit) {
+private fun ReceiptDialog(
+    path: String,
+    onClose: () -> Unit,
+    onSaveReplacement: (String) -> Unit,
+    onDeleteReceipt: (() -> Unit)? = null
+) {
     val context = LocalContext.current
+    var showDeleteConfirm by remember(path) { mutableStateOf(false) }
+    var zoomScale by remember(path) { mutableFloatStateOf(1f) }
+    var zoomOffset by remember(path) { mutableStateOf(Offset.Zero) }
     var replacementUri by remember(path) { mutableStateOf<Uri?>(null) }
     var acceptedReplacementPath by remember(path) { mutableStateOf<String?>(null) }
     val replacementPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -825,7 +867,25 @@ private fun ReceiptDialog(path: String, onClose: () -> Unit, onSaveReplacement: 
                     TextButton(onClick = onClose) { Text("×", fontSize = 28.sp) }
                 }
                 if (bitmap != null) {
-                    Image(bitmap, contentDescription = "Comprobante de pago", modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp), contentScale = ContentScale.Fit)
+                    Image(
+                        bitmap,
+                        contentDescription = "Comprobante de pago. Pellizca para ampliar",
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp)
+                            .clipToBounds()
+                            .pointerInput(displayedPath) {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    zoomScale = (zoomScale * zoom).coerceIn(1f, 5f)
+                                    zoomOffset = if (zoomScale <= 1f) Offset.Zero else zoomOffset + pan
+                                }
+                            }
+                            .graphicsLayer {
+                                scaleX = zoomScale
+                                scaleY = zoomScale
+                                translationX = zoomOffset.x
+                                translationY = zoomOffset.y
+                            },
+                        contentScale = ContentScale.Fit
+                    )
                 } else { Text("No se pudo abrir el comprobante guardado.") }
                 if (replacementUri != null && acceptedReplacementPath == null) {
                     Button(onClick = {
@@ -841,6 +901,11 @@ private fun ReceiptDialog(path: String, onClose: () -> Unit, onSaveReplacement: 
                         replacementUri = null
                         acceptedReplacementPath = null
                     }, modifier = Modifier.fillMaxWidth()) { Text("GUARDAR COMPROBANTE") }
+                }
+                if (onDeleteReceipt != null) {
+                    OutlinedButton(onClick = { showDeleteConfirm = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("ELIMINAR COMPROBANTE", color = Color(0xFFFF4D5A))
+                    }
                 }
                 Button(onClick = { downloadLauncher.launch("comprobante.jpg") }, modifier = Modifier.fillMaxWidth()) { Text("DESCARGAR") }
                 if (acceptedReplacementPath == null && replacementUri == null) {
@@ -869,6 +934,69 @@ private fun ReceiptDialog(path: String, onClose: () -> Unit, onSaveReplacement: 
                     }.onFailure { Toast.makeText(context, "No se pudo compartir el comprobante", Toast.LENGTH_LONG).show() }
                 }, modifier = Modifier.fillMaxWidth()) { Text("COMPARTIR") }
             }
+        }
+    }
+    if (showDeleteConfirm && onDeleteReceipt != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("Eliminar comprobante") },
+            text = { Text("La cuota volverá a estar pendiente. ¿Continuar?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirm = false
+                    onDeleteReceipt()
+                }) { Text("ELIMINAR") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) { Text("CANCELAR") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun LoadingScreen(progress: Float) {
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 420),
+        label = "startupProgress"
+    )
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color(0xFF050B10)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier.size(184.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(Modifier.fillMaxSize()) {
+                    drawArc(
+                        color = Color(0x553EDCF4),
+                        startAngle = -90f,
+                        sweepAngle = 360f,
+                        useCenter = false,
+                        style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                    drawArc(
+                        color = Blue,
+                        startAngle = -90f,
+                        sweepAngle = 360f * animatedProgress,
+                        useCenter = false,
+                        style = Stroke(width = 8.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
+                Image(
+                    painter = painterResource(R.drawable.ic_launcher_foreground),
+                    contentDescription = "Icono de ADMIN",
+                    modifier = Modifier.size(118.dp),
+                    contentScale = ContentScale.Fit
+                )
+            }
+            Spacer(Modifier.height(22.dp))
+            Text("${(animatedProgress * 100).roundToInt()}%", color = Blue, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Text("CARGANDO ADMIN", color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
