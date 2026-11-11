@@ -312,6 +312,17 @@ fun AdminApp() {
                         }
                     }
                 }
+                val nearTrash = draggedRect?.overlaps(trashBounds ?: Rect.Zero) == true
+                val trashScale by androidx.compose.animation.core.animateFloatAsState(if (nearTrash) 1.18f else 1f, label = "trashScale")
+                val trashShake by androidx.compose.animation.core.rememberInfiniteTransition(label = "trashShake").animateFloat(
+                    initialValue = -4f,
+                    targetValue = 4f,
+                    animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                        animation = tween(85),
+                        repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+                    ),
+                    label = "trashShakeAngle"
+                )
                 Box(
                     Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 20.dp).size(48.dp)
                         .onGloballyPositioned { coordinates ->
@@ -319,10 +330,9 @@ fun AdminApp() {
                             trashBounds = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
                         }
                         .graphicsLayer {
-                            val nearTrash = draggedRect?.overlaps(trashBounds ?: Rect.Zero) == true
-                            val scale = if (nearTrash) 1.18f else 1f
-                            scaleX = scale
-                            scaleY = scale
+                            scaleX = trashScale
+                            scaleY = trashScale
+                            rotationZ = if (nearTrash) trashShake else 0f
                         }
                         .background(Color(0x332B1018), RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center
