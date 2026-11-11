@@ -164,6 +164,7 @@ fun AdminApp() {
     var advanceAmount by remember { mutableStateOf("") }
     var advanceReceiptUri by remember { mutableStateOf<Uri?>(null) }
     var viewingAdvanceReceipt by remember { mutableStateOf<AdvanceReceiptTarget?>(null) }
+    var advanceToDelete by remember { mutableStateOf<Advance?>(null) }
     var draggedDebtName by remember { mutableStateOf<String?>(null) }
     var draggedRect by remember { mutableStateOf<Rect?>(null) }
     var originalDragRect by remember { mutableStateOf<Rect?>(null) }
@@ -226,9 +227,8 @@ fun AdminApp() {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                                 Text("ADMIN", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink)
-                                IconButton(onClick = { showSizeSettings = true }) {
-                                    Text("⚙", fontSize = 22.sp, color = Blue)
-                                }
+                                Spacer(Modifier.width(8.dp))
+                                Text("Control de deudas", color = Muted, fontSize = 13.sp)
                             }
                             IconButton(onClick = { newDebtName = ""; showCreateDebt = true }) {
                                 Text("+", fontSize = 30.sp, fontWeight = FontWeight.Normal, color = Blue)
@@ -237,11 +237,11 @@ fun AdminApp() {
                         }
                         Spacer(Modifier.height(12.dp))
                     }
-                    item(key = "debts-heading") {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
-                            Text("DEUDAS", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Ink)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Control de deudas", color = Muted, fontSize = 13.sp)
+                    item(key = "size-settings") {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                            IconButton(onClick = { showSizeSettings = true }) {
+                                Text("⚙", fontSize = 22.sp, color = Blue)
+                            }
                         }
                     }
                     items(debts, key = { it.name }) { debt ->
@@ -251,7 +251,6 @@ fun AdminApp() {
                             modifier = Modifier.padding(bottom = 12.dp).animateItem(),
                             onPositioned = { rect ->
                                 cardBounds[debt.name] = rect
-                                if (draggedDebtName == debt.name) originalDragRect = rect
                             },
                             onClick = { if (draggedDebtName == null) selected = debt.name },
                             onDragStart = { rect ->
@@ -259,6 +258,12 @@ fun AdminApp() {
                                 originalDragRect = rect
                                 draggedRect = rect
                                 hoveredDebtName = null
+                                val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    vibrator.vibrate(VibrationEffect.createOneShot(55, VibrationEffect.DEFAULT_AMPLITUDE))
+                                } else {
+                                    @Suppress("DEPRECATION") vibrator.vibrate(55)
+                                }
                             },
                             onDrag = { delta ->
                                 val movedRect = draggedRect?.translate(delta)
@@ -266,7 +271,16 @@ fun AdminApp() {
                                 val movingName = draggedDebtName
                                 val hovered = if (movedRect == null || movingName == null) null else
                                     debts.firstOrNull { candidate ->
-                                        candidate.name != movingName && cardBounds[candidate.name]?.contains(movedRect.center) == true
+                                        if (candidate.name == movingName) false
+                                        else {
+                                            val targetRect = cardBounds[candidate.name]
+                                            if (targetRect == null || targetRect.width <= 0f || targetRect.height <= 0f) false
+                                            else {
+                                                val overlapWidth = (minOf(movedRect.right, targetRect.right) - maxOf(movedRect.left, targetRect.left)).coerceAtLeast(0f)
+                                                val overlapHeight = (minOf(movedRect.bottom, targetRect.bottom) - maxOf(movedRect.top, targetRect.top)).coerceAtLeast(0f)
+                                                (overlapWidth * overlapHeight) / (targetRect.width * targetRect.height) >= 0.90f
+                                            }
+                                        }
                                     }
                                 hoveredDebtName = hovered?.name
                                 if (hovered != null && movingName != null) {
@@ -300,8 +314,7 @@ fun AdminApp() {
                                 hoveredDebtName = null
                             },
                             dragTranslation = if (draggedDebtName == debt.name && draggedRect != null && originalDragRect != null) draggedRect!!.topLeft - originalDragRect!!.topLeft else Offset.Zero,
-                            pushDown = hoveredDebtName == debt.name
-                        )
+                         )
                     }
                     item(key = "total-debt") {
                         Card(shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
@@ -323,7 +336,7 @@ fun AdminApp() {
                     ),
                     label = "trashShakeAngle"
                 )
-                Box(
+                if (draggedDebtName != null) Box(
                     Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 20.dp).size(48.dp)
                         .onGloballyPositioned { coordinates ->
                             val p = coordinates.positionInRoot()
@@ -367,7 +380,29 @@ fun AdminApp() {
                     onEditName = { manageAction = "edit_select" },
                     onDeleteDebt = { manageAction = "delete_select" },
                     onAddAdvance = { showAdvanceDialog = true; advanceAmount = ""; advanceReceiptUri = null },
-                    onViewAdvanceReceipt = { advance -> viewingAdvanceReceipt = AdvanceReceiptTarget(current.name, advance.id, advance.receipt) }
+                    onViewAdvanceReceipt = { advance -> viewingAdvanceReceipt = AdvanceReceiptTarget(current.name, advance.id, advance.receipt) },
+                    onDeleteAdvance = { advance -> advanceToDelete = advance }
+                )
+            }
+
+            if (advanceToDelete != null && current != null) {
+                AlertDialog(
+                    onDismissRequest = { advanceToDelete = null },
+                    title = { Text("Eliminar") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val target = advanceToDelete
+                            if (target != null) {
+                                save(debts.map { debt ->
+                                    if (debt.name == current.name) debt.copy(advances = debt.advances.filterNot { it.id == target.id })
+                                    else debt
+                                })
+                                File(target.receipt).delete()
+                            }
+                            advanceToDelete = null
+                        }) { Text("SÍ") }
+                    },
+                    dismissButton = { TextButton(onClick = { advanceToDelete = null }) { Text("NO") } }
                 )
             }
 
@@ -646,8 +681,7 @@ private fun DebtCard(
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
     dragTranslation: Offset,
-    pushDown: Boolean
-) {
+ ) {
     var cardRect by remember(debt.name) { mutableStateOf(Rect.Zero) }
     val baseViewConfiguration = LocalViewConfiguration.current
     val longPressViewConfiguration = remember(baseViewConfiguration) {
@@ -658,7 +692,7 @@ private fun DebtCard(
     CompositionLocalProvider(LocalViewConfiguration provides longPressViewConfiguration) {
     val scale = 0.82f + (sizeLevel - 1) * 0.04f
     Card(
-        modifier = modifier.fillMaxWidth().padding(top = if (pushDown) 54.dp else 0.dp).onGloballyPositioned { coordinates ->
+        modifier = modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
             val p = coordinates.positionInRoot()
             cardRect = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
             onPositioned(cardRect)
@@ -706,7 +740,8 @@ private fun DebtDetail(
     onEditName: () -> Unit,
     onDeleteDebt: () -> Unit,
     onAddAdvance: () -> Unit,
-    onViewAdvanceReceipt: (Advance) -> Unit
+    onViewAdvanceReceipt: (Advance) -> Unit,
+    onDeleteAdvance: (Advance) -> Unit
 ) {
     var count by remember(debt.name) { mutableStateOf(if (debt.count == 0) "" else debt.count.toString()) }
     var amount by remember(debt.name) { mutableStateOf(if (debt.amount == 0L) "" else money(debt.amount)) }
@@ -762,6 +797,9 @@ private fun DebtDetail(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("S/ ${money(advance.amount)}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                                 TextButton(onClick = { onViewAdvanceReceipt(advance) }) { Text("ABRIR COMPROBANTE") }
+                                IconButton(onClick = { onDeleteAdvance(advance) }) {
+                                    Text("🗑", color = Color(0xFFFF4D5A), fontSize = 19.sp)
+                                }
                             }
                         }
                         Text("Saldo pendiente después de adelantos: S/ ${money(debt.pending)}", color = Blue, fontWeight = FontWeight.SemiBold)
