@@ -23,6 +23,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.input.pointer.pointerInput
@@ -44,6 +45,8 @@ import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -210,7 +213,7 @@ fun AdminApp() {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0A2231), BgDark, Color(0xFF06131D)))).statusBarsPadding().navigationBarsPadding()) {
             val current = debts.firstOrNull { it.name == selected }
             if (current == null) {
-                Column(Modifier.fillMaxSize().padding(20.dp)) {
+                Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState())) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.weight(1f)) {
                             Text("ADMIN", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink)
