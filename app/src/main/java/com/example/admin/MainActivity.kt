@@ -250,7 +250,7 @@ fun AdminApp() {
                             debt = debt,
                             sizeLevel = cardSizeLevel,
                             modifier = Modifier.padding(bottom = 12.dp).animateItem(),
-                            onClick = { selected = debt.name },
+                            onClick = { longPressedDebtName = null; selected = debt.name },
                             onLongPress = {
                                 longPressedDebtName = debt.name
                                 val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
@@ -609,7 +609,7 @@ private fun DebtCard(
             val hours = (secondsLeft % 86400) / 3600
             val minutes = (secondsLeft % 3600) / 60
             val seconds = secondsLeft % 60
-            "${days} día(s), ${hours} h, ${minutes} min, ${seconds} s"
+            "${days} ${if (days == 1L) "día" else "días"}, ${hours} ${if (hours == 1L) "hora" else "horas"}, ${minutes} ${if (minutes == 1L) "minuto" else "minutos"}, ${seconds} ${if (seconds == 1L) "segundo" else "segundos"}"
         }
     }
     val scale = 0.82f + (sizeLevel - 1) * 0.04f
