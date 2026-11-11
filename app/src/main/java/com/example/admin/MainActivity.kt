@@ -26,8 +26,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.blur
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.delay
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -82,6 +83,8 @@ import java.io.File
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.Duration
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.util.UUID
@@ -157,20 +160,14 @@ fun AdminApp() {
     var debts by remember { mutableStateOf(loadDebts(context)) }
     var showSizeSettings by remember { mutableStateOf(false) }
     var cardSizeLevel by remember { mutableIntStateOf(context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).getInt("card_size_level", 5).coerceIn(1, 10)) }
-    val cardBounds = remember { mutableStateMapOf<String, Rect>() }
-    var hoveredDebtName by remember { mutableStateOf<String?>(null) }
+    var longPressedDebtName by remember { mutableStateOf<String?>(null) }
+    var debtToDelete by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<String?>(null) }
     var showAdvanceDialog by remember { mutableStateOf(false) }
     var advanceAmount by remember { mutableStateOf("") }
     var advanceReceiptUri by remember { mutableStateOf<Uri?>(null) }
     var viewingAdvanceReceipt by remember { mutableStateOf<AdvanceReceiptTarget?>(null) }
     var advanceToDelete by remember { mutableStateOf<Advance?>(null) }
-    var draggedDebtName by remember { mutableStateOf<String?>(null) }
-    var draggedRect by remember { mutableStateOf<Rect?>(null) }
-    var originalDragRect by remember { mutableStateOf<Rect?>(null) }
-    var trashBounds by remember { mutableStateOf<Rect?>(null) }
-    var particleBurst by remember { mutableIntStateOf(0) }
-    var particleOrigin by remember { mutableStateOf(Offset.Zero) }
     var paying by remember { mutableStateOf<Installment?>(null) }
     var receiptUri by remember { mutableStateOf<Uri?>(null) }
     var viewingReceipt by remember { mutableStateOf<ReceiptTarget?>(null) }
@@ -230,91 +227,37 @@ fun AdminApp() {
                                 Spacer(Modifier.width(8.dp))
                                 Text("Control de deudas", color = Muted, fontSize = 13.sp)
                             }
-                            IconButton(onClick = { newDebtName = ""; showCreateDebt = true }) {
-                                Text("+", fontSize = 30.sp, fontWeight = FontWeight.Normal, color = Blue)
-                            }
-                            Spacer(Modifier.width(48.dp))
-                        }
-                        Spacer(Modifier.height(12.dp))
-                    }
-                    item(key = "size-settings") {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             IconButton(onClick = { showSizeSettings = true }) {
                                 Text("⚙", fontSize = 22.sp, color = Blue)
                             }
+                            IconButton(onClick = { newDebtName = ""; showCreateDebt = true }) {
+                                Text("+", fontSize = 30.sp, fontWeight = FontWeight.Normal, color = Blue)
+                            }
+                            if (longPressedDebtName != null) {
+                                IconButton(onClick = { debtToDelete = longPressedDebtName; longPressedDebtName = null }) {
+                                    Text("🗑", fontSize = 22.sp, color = Color(0xFFFF394F))
+                                }
+                            }
                         }
+                        Spacer(Modifier.height(12.dp))
                     }
-                    items(debts, key = { it.name }) { debt ->
+                    items(debts.sortedWith(compareBy<Debt> { debt ->
+                        debt.installments.filterNot { it.paid }
+                            .mapNotNull { row -> runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull() }
+                            .minOrNull() ?: LocalDate.MAX
+                    }), key = { it.name }) { debt ->
                         DebtCard(
                             debt = debt,
                             sizeLevel = cardSizeLevel,
                             modifier = Modifier.padding(bottom = 12.dp).animateItem(),
-                            onPositioned = { rect ->
-                                cardBounds[debt.name] = rect
-                            },
-                            onClick = { if (draggedDebtName == null) selected = debt.name },
-                            onDragStart = { rect ->
-                                draggedDebtName = debt.name
-                                originalDragRect = rect
-                                draggedRect = rect
-                                hoveredDebtName = null
+                            onClick = { selected = debt.name },
+                            onLongPress = {
+                                longPressedDebtName = debt.name
                                 val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    vibrator.vibrate(VibrationEffect.createOneShot(55, VibrationEffect.DEFAULT_AMPLITUDE))
-                                } else {
-                                    @Suppress("DEPRECATION") vibrator.vibrate(55)
-                                }
-                            },
-                            onDrag = { delta ->
-                                val movedRect = draggedRect?.translate(delta)
-                                draggedRect = movedRect
-                                val movingName = draggedDebtName
-                                val hovered = if (movedRect == null || movingName == null) null else
-                                    debts.firstOrNull { candidate ->
-                                        if (candidate.name == movingName) false
-                                        else {
-                                            val targetRect = cardBounds[candidate.name]
-                                            if (targetRect == null || targetRect.width <= 0f || targetRect.height <= 0f) false
-                                            else {
-                                                val overlapWidth = (minOf(movedRect.right, targetRect.right) - maxOf(movedRect.left, targetRect.left)).coerceAtLeast(0f)
-                                                val overlapHeight = (minOf(movedRect.bottom, targetRect.bottom) - maxOf(movedRect.top, targetRect.top)).coerceAtLeast(0f)
-                                                (overlapWidth * overlapHeight) / (targetRect.width * targetRect.height) >= 0.90f
-                                            }
-                                        }
-                                    }
-                                hoveredDebtName = hovered?.name
-                                if (hovered != null && movingName != null) {
-                                    val next = debts.toMutableList()
-                                    val from = next.indexOfFirst { it.name == movingName }
-                                    if (from >= 0) {
-                                        val moving = next.removeAt(from)
-                                        val targetIndex = next.indexOfFirst { it.name == hovered.name }
-                                        if (targetIndex >= 0) {
-                                            next.add(targetIndex, moving)
-                                            if (next != debts) debts = next
-                                        }
-                                    }
-                                }
-                            },
-                            onDragEnd = {
-                                val target = draggedDebtName
-                                val rect = draggedRect
-                                val trash = trashBounds
-                                if (target != null && rect != null && trash != null && rect.overlaps(trash)) {
-                                    particleOrigin = Offset(trash.center.x, trash.center.y)
-                                    save(debts.filterNot { it.name == target })
-                                    particleBurst++
-                                } else {
-                                    persistDebts(context, debts)
-                                    DebtNotifications.updateOverdueBadge(context, debts)
-                                }
-                                draggedDebtName = null
-                                draggedRect = null
-                                originalDragRect = null
-                                hoveredDebtName = null
-                            },
-                            dragTranslation = if (draggedDebtName == debt.name && draggedRect != null && originalDragRect != null) draggedRect!!.topLeft - originalDragRect!!.topLeft else Offset.Zero,
-                         )
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createOneShot(55, VibrationEffect.DEFAULT_AMPLITUDE))
+                                else { @Suppress("DEPRECATION") vibrator.vibrate(55) }
+                            }
+                        )
                     }
                     item(key = "total-debt") {
                         Card(shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
@@ -325,41 +268,7 @@ fun AdminApp() {
                         }
                     }
                 }
-                val nearTrash = draggedRect?.overlaps(trashBounds ?: Rect.Zero) == true
-                val trashScale by androidx.compose.animation.core.animateFloatAsState(if (nearTrash) 1.18f else 1f, label = "trashScale")
-                val trashShake by androidx.compose.animation.core.rememberInfiniteTransition(label = "trashShake").animateFloat(
-                    initialValue = -4f,
-                    targetValue = 4f,
-                    animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-                        animation = tween(85),
-                        repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
-                    ),
-                    label = "trashShakeAngle"
-                )
-                if (draggedDebtName != null) Box(
-                    Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 20.dp).size(48.dp)
-                        .onGloballyPositioned { coordinates ->
-                            val p = coordinates.positionInRoot()
-                            trashBounds = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
-                        }
-                        .graphicsLayer {
-                            scaleX = trashScale
-                            scaleY = trashScale
-                            rotationZ = if (nearTrash) trashShake else 0f
-                        }
-                        .background(Color(0x332B1018), RoundedCornerShape(12.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Canvas(Modifier.size(27.dp)) {
-                        val w = size.width
-                        val h = size.height
-                        drawLine(Color(0xFFFF394F), Offset(w*0.22f,h*0.22f), Offset(w*0.78f,h*0.22f), 2.6.dp.toPx())
-                        drawLine(Color(0xFFFF394F), Offset(w*0.38f,h*0.12f), Offset(w*0.62f,h*0.12f), 2.6.dp.toPx())
-                        drawRoundRect(Color(0xFFFF394F), Offset(w*0.28f,h*0.3f), Size(w*0.44f,h*0.58f), androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()), style = Stroke(2.4.dp.toPx()))
-                        drawLine(Color(0xFFFF394F), Offset(w*0.43f,h*0.4f), Offset(w*0.43f,h*0.78f), 1.7.dp.toPx())
-                        drawLine(Color(0xFFFF394F), Offset(w*0.57f,h*0.4f), Offset(w*0.57f,h*0.78f), 1.7.dp.toPx())
-                    }
-                }
+
             } else {
                 DebtDetail(
                     debt = current,
@@ -403,6 +312,21 @@ fun AdminApp() {
                         }) { Text("SÍ") }
                     },
                     dismissButton = { TextButton(onClick = { advanceToDelete = null }) { Text("NO") } }
+                )
+            }
+
+            if (debtToDelete != null && current == null) {
+                AlertDialog(
+                    onDismissRequest = { debtToDelete = null },
+                    title = { Text("ELIMINAR") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val name = debtToDelete
+                            if (name != null) save(debts.filterNot { it.name == name })
+                            debtToDelete = null
+                        }) { Text("SÍ") }
+                    },
+                    dismissButton = { TextButton(onClick = { debtToDelete = null }) { Text("NO") } }
                 )
             }
 
@@ -651,20 +575,7 @@ fun AdminApp() {
                     viewingReceipt = target.copy(path = newPath)
                 })
             }
-            if (particleBurst > 0) {
-                key(particleBurst) {
-                    val progress = remember { Animatable(0f) }
-                    LaunchedEffect(particleBurst) { progress.animateTo(1f, tween(650)) }
-                    Canvas(Modifier.fillMaxSize()) {
-                        val p = progress.value
-                        repeat(14) { i ->
-                            val angle = (i * (Math.PI * 2.0 / 14.0)).toFloat()
-                            val distance = 12f + 48f * p
-                            drawCircle(Color(0xFFFF394F).copy(alpha = 1f - p), radius = (3.2f * (1f - p)).coerceAtLeast(0.2f), center = particleOrigin + Offset(cos(angle) * distance, sin(angle) * distance))
-                        }
-                    }
-                }
-            }
+
             }
         }
     }
@@ -675,14 +586,39 @@ private fun DebtCard(
     debt: Debt,
     sizeLevel: Int,
     modifier: Modifier = Modifier,
-    onPositioned: (Rect) -> Unit,
     onClick: () -> Unit,
-    onDragStart: (Rect) -> Unit,
-    onDrag: (Offset) -> Unit,
-    onDragEnd: () -> Unit,
-    dragTranslation: Offset,
- ) {
-    var cardRect by remember(debt.name) { mutableStateOf(Rect.Zero) }
+    onLongPress: () -> Unit
+) {
+    var currentTime by remember { mutableStateOf(LocalDateTime.now()) }
+    LaunchedEffect(debt.name) {
+        while (true) {
+            currentTime = LocalDateTime.now()
+            delay(1000)
+        }
+    }
+    val nextDue = debt.installments.filterNot { it.paid }
+        .mapNotNull { row -> runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull() }
+        .minOrNull()
+    val dueAt = nextDue?.atTime(23, 59, 59)
+    val secondsLeft = dueAt?.let { Duration.between(currentTime, it).seconds }
+    val countdown = when {
+        dueAt == null -> "Sin cuotas pendientes"
+        secondsLeft == null || secondsLeft <= 0L -> "VENCIDA"
+        else -> {
+            val days = secondsLeft / 86400
+            val hours = (secondsLeft % 86400) / 3600
+            val minutes = (secondsLeft % 3600) / 60
+            val seconds = secondsLeft % 60
+            "${days} día(s), ${hours} h, ${minutes} min, ${seconds} s"
+        }
+    }
+    val scale = 0.82f + (sizeLevel - 1) * 0.04f
+    val overdueCount = debt.installments.count { row ->
+        !row.paid && (runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull()?.isBefore(LocalDate.now()) == true)
+    }
+    val totalInstallments = debt.installments.size.takeIf { it > 0 } ?: debt.count
+    val paidInstallments = debt.installments.count { it.paid }
+    val hasOverdue = overdueCount > 0
     val baseViewConfiguration = LocalViewConfiguration.current
     val longPressViewConfiguration = remember(baseViewConfiguration) {
         object : ViewConfiguration by baseViewConfiguration {
@@ -690,44 +626,33 @@ private fun DebtCard(
         }
     }
     CompositionLocalProvider(LocalViewConfiguration provides longPressViewConfiguration) {
-    val scale = 0.82f + (sizeLevel - 1) * 0.04f
-    Card(
-        modifier = modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
-            val p = coordinates.positionInRoot()
-            cardRect = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
-            onPositioned(cardRect)
-        }.offset { IntOffset(dragTranslation.x.roundToInt(), dragTranslation.y.roundToInt()) }
-            .pointerInput(debt.name) {
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { onDragStart(cardRect) },
-                    onDrag = { change, amount -> change.consume(); onDrag(Offset(amount.x, amount.y)) },
-                    onDragEnd = onDragEnd,
-                    onDragCancel = onDragEnd
-                )
-            }.clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = CardDark),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-        border = BorderStroke(1.dp, if (debt.installments.any { row -> !row.paid && (runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull()?.isBefore(LocalDate.now()) == true) }) Color(0xFFFF4D5A) else CyanBorder)
-    ) {
-        Column(Modifier.padding((18f * scale).dp)) {
-            val overdueCount = debt.installments.count { row ->
-                !row.paid && (runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull()?.isBefore(LocalDate.now()) == true)
+        Card(
+            modifier = modifier.fillMaxWidth()
+                .pointerInput(debt.name) {
+                    detectTapGestures(onTap = { onClick() }, onLongPress = { onLongPress() })
+                },
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = CardDark),
+            elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+            border = BorderStroke(1.dp, if (hasOverdue) Color(0xFFFF4D5A) else CyanBorder)
+        ) {
+            Column(Modifier.padding((18f * scale).dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(debt.name, fontSize = (18f * scale).sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Text(" (S/ ${money(debt.total)})", fontSize = (13f * scale).sp, fontWeight = FontWeight.SemiBold, color = Blue)
+                    Spacer(Modifier.weight(1f))
+                    if (totalInstallments > 0) Text("$paidInstallments/$totalInstallments", fontSize = (13f * scale).sp, fontWeight = FontWeight.Bold, color = Ink)
+                    if (overdueCount > 0) Text("  ! $overdueCount", color = Color(0xFFFF4D5A), fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height((8f * scale).dp))
+                Text("S/ ${money(debt.pending)}", fontSize = (25f * scale).sp, fontWeight = FontWeight.Bold, color = Ink)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Deuda pendiente", color = Muted, fontSize = (13f * scale).sp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(countdown, color = if (secondsLeft != null && secondsLeft <= 0L) Color(0xFFFF4D5A) else Blue, fontSize = (11f * scale).sp, fontWeight = FontWeight.SemiBold)
+                }
             }
-            val totalInstallments = debt.installments.size.takeIf { it > 0 } ?: debt.count
-            val paidInstallments = debt.installments.count { it.paid }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(debt.name, fontSize = (18f * scale).sp, fontWeight = FontWeight.Bold, color = Ink)
-                Text(" (S/ ${money(debt.total)})", fontSize = (13f * scale).sp, fontWeight = FontWeight.SemiBold, color = Blue)
-                Spacer(Modifier.weight(1f))
-                if (totalInstallments > 0) Text("$paidInstallments/$totalInstallments", fontSize = (13f * scale).sp, fontWeight = FontWeight.Bold, color = Ink)
-                if (overdueCount > 0) Text("  ! $overdueCount", color = Color(0xFFFF4D5A), fontWeight = FontWeight.Bold)
-            }
-            Spacer(Modifier.height((8f * scale).dp))
-            Text("S/ ${money(debt.pending)}", fontSize = (25f * scale).sp, fontWeight = FontWeight.Bold, color = Ink)
-            Text("Deuda pendiente", color = Muted, fontSize = (13f * scale).sp)
         }
-    }
     }
 }
 
