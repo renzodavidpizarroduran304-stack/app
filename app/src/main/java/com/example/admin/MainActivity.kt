@@ -24,6 +24,25 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.Canvas
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -78,16 +97,19 @@ data class Installment(
     val receipt: String? = null
 )
 data class ReceiptTarget(val debtName: String, val installmentId: String, val path: String)
+data class Advance(val id: String, val amount: Long, val receipt: String)
+data class AdvanceReceiptTarget(val debtName: String, val advanceId: String, val path: String)
 
 data class Debt(
     val name: String,
     val count: Int = 0,
     val amount: Long = 0,
     val startDate: String = "",
-    val installments: List<Installment> = emptyList()
+    val installments: List<Installment> = emptyList(),
+    val advances: List<Advance> = emptyList()
 ) {
     val total: Long get() = count.toLong() * amount
-    val pending: Long get() = installments.filterNot { it.paid }.sumOf { it.amount }
+    val pending: Long get() = (installments.filterNot { it.paid }.sumOf { it.amount } - advances.sumOf { it.amount }).coerceAtLeast(0L)
 }
 
 class MainActivity : ComponentActivity() {
@@ -131,7 +153,16 @@ fun AdminApp() {
     var referenceDateDraft by remember { mutableStateOf(referenceDate) }
     var referenceDateError by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<String?>(null) }
-    var showConfig by remember { mutableStateOf(false) }
+    var showAdvanceDialog by remember { mutableStateOf(false) }
+    var advanceAmount by remember { mutableStateOf("") }
+    var advanceReceiptUri by remember { mutableStateOf<Uri?>(null) }
+    var viewingAdvanceReceipt by remember { mutableStateOf<AdvanceReceiptTarget?>(null) }
+    var draggedDebtName by remember { mutableStateOf<String?>(null) }
+    var draggedRect by remember { mutableStateOf<Rect?>(null) }
+    var originalDragRect by remember { mutableStateOf<Rect?>(null) }
+    var trashBounds by remember { mutableStateOf<Rect?>(null) }
+    var particleBurst by remember { mutableIntStateOf(0) }
+    var particleOrigin by remember { mutableStateOf(Offset.Zero) }
     var paying by remember { mutableStateOf<Installment?>(null) }
     var receiptUri by remember { mutableStateOf<Uri?>(null) }
     var viewingReceipt by remember { mutableStateOf<ReceiptTarget?>(null) }
@@ -157,6 +188,9 @@ fun AdminApp() {
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         receiptUri = uri
+    }
+    val advanceImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        advanceReceiptUri = uri
     }
 
     MaterialTheme(
@@ -185,7 +219,25 @@ fun AdminApp() {
                         IconButton(onClick = { newDebtName = ""; showCreateDebt = true }) {
                             Text("+", fontSize = 30.sp, fontWeight = FontWeight.Normal, color = Blue)
                         }
-                        TextButton(onClick = { showConfig = true }) { Text("CONFIGURAR") }
+                        if (draggedDebtName != null) {
+                            val nearTrash = draggedRect?.overlaps(trashBounds ?: Rect.Zero) == true
+                            val trashScale by androidx.compose.animation.core.animateFloatAsState(if (nearTrash) 1.18f else 1f, label = "trashScale")
+                            val trashTilt by androidx.compose.animation.core.animateFloatAsState(if (nearTrash) 5f else 0f, label = "trashTilt")
+                            Box(Modifier.size(48.dp).onGloballyPositioned { coordinates ->
+                                val p = coordinates.positionInRoot()
+                                trashBounds = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
+                            }.graphicsLayer { scaleX = trashScale; scaleY = trashScale; rotationZ = trashTilt }
+                                .background(Color(0x332B1018), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                                Canvas(Modifier.size(27.dp)) {
+                                    val w = size.width; val h = size.height
+                                    drawLine(Color(0xFFFF394F), Offset(w*0.22f,h*0.22f), Offset(w*0.78f,h*0.22f), 2.6.dp.toPx())
+                                    drawLine(Color(0xFFFF394F), Offset(w*0.38f,h*0.12f), Offset(w*0.62f,h*0.12f), 2.6.dp.toPx())
+                                    drawRoundRect(Color(0xFFFF394F), Offset(w*0.28f,h*0.3f), Size(w*0.44f,h*0.58f), androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()), style = Stroke(2.4.dp.toPx()))
+                                    drawLine(Color(0xFFFF394F), Offset(w*0.43f,h*0.4f), Offset(w*0.43f,h*0.78f), 1.7.dp.toPx())
+                                    drawLine(Color(0xFFFF394F), Offset(w*0.57f,h*0.4f), Offset(w*0.57f,h*0.78f), 1.7.dp.toPx())
+                                }
+                            }
+                        }
                     }
                     Spacer(Modifier.height(12.dp))
                     Card(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = CardDark)) {
@@ -220,10 +272,26 @@ fun AdminApp() {
                     }
                     Spacer(Modifier.height(12.dp))
                     debts.forEach { debt ->
-                        DebtCard(debt) { selected = debt.name }
+                        DebtCard(
+                            debt = debt,
+                            onClick = { if (draggedDebtName == null) selected = debt.name },
+                            onDragStart = { rect -> draggedDebtName = debt.name; originalDragRect = rect; draggedRect = rect },
+                            onDrag = { delta -> draggedRect = draggedRect?.translate(delta) },
+                            onDragEnd = {
+                                val target = draggedDebtName
+                                val rect = draggedRect
+                                val trash = trashBounds
+                                if (target != null && rect != null && trash != null && rect.overlaps(trash)) {
+                                    particleOrigin = Offset(trash.center.x, trash.center.y)
+                                    save(debts.filterNot { it.name == target })
+                                    particleBurst++
+                                }
+                                draggedDebtName = null; draggedRect = null; originalDragRect = null
+                            },
+                            dragTranslation = if (draggedDebtName == debt.name && draggedRect != null && originalDragRect != null) draggedRect!!.topLeft - originalDragRect!!.topLeft else Offset.Zero
+                        )
                         Spacer(Modifier.height(12.dp))
                     }
-                    Spacer(Modifier.weight(1f))
                     Card(shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
                         Column(Modifier.fillMaxWidth().padding(20.dp)) {
                             Text("DEUDA TOTAL", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -249,7 +317,9 @@ fun AdminApp() {
                         installment.receipt?.let { path -> viewingReceipt = ReceiptTarget(current.name, installment.id, path) }
                     },
                     onEditName = { manageAction = "edit_select" },
-                    onDeleteDebt = { manageAction = "delete_select" }
+                    onDeleteDebt = { manageAction = "delete_select" },
+                    onAddAdvance = { showAdvanceDialog = true; advanceAmount = ""; advanceReceiptUri = null },
+                    onViewAdvanceReceipt = { advance -> viewingAdvanceReceipt = AdvanceReceiptTarget(current.name, advance.id, advance.receipt) }
                 )
             }
 
@@ -365,12 +435,32 @@ fun AdminApp() {
                 )
             }
 
-            if (showConfig) {
+            if (showAdvanceDialog && current != null) {
                 AlertDialog(
-                    onDismissRequest = { showConfig = false },
-                    title = { Text("Configuración") },
-                    text = { Text("Las deudas se guardan en este dispositivo. Para editar una deuda, entra en su tarjeta.") },
-                    confirmButton = { TextButton(onClick = { showConfig = false }) { Text("Cerrar") } }
+                    onDismissRequest = { showAdvanceDialog = false; advanceReceiptUri = null },
+                    title = { Text("Registrar adelanto") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedTextField(value = advanceAmount, onValueChange = { advanceAmount = it.filter { ch -> ch.isDigit() || ch == '.' || ch == ',' }.replace(',', '.') }, label = { Text("Monto del adelanto (S/)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true)
+                            OutlinedButton(onClick = { advanceImagePicker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) { Text(if (advanceReceiptUri == null) "ADJUNTAR COMPROBANTE" else "COMPROBANTE ADJUNTADO") }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            val cents = parseMoney(advanceAmount)
+                            val uri = advanceReceiptUri
+                            if (cents == null || cents <= 0L) error = "Ingresa un monto válido para el adelanto."
+                            else if (uri == null) error = "Adjunta el comprobante del adelanto."
+                            else {
+                                val file = copyReceipt(context, uri)
+                                if (file != null) {
+                                    save(debts.map { debt -> if (debt.name == current.name) debt.copy(advances = debt.advances + Advance(UUID.randomUUID().toString(), cents, file)) else debt })
+                                    showAdvanceDialog = false; advanceReceiptUri = null; advanceAmount = ""
+                                } else error = "No se pudo guardar el comprobante."
+                            }
+                        }) { Text("GUARDAR ADELANTO") }
+                    },
+                    dismissButton = { TextButton(onClick = { showAdvanceDialog = false; advanceReceiptUri = null }) { Text("CANCELAR") } }
                 )
             }
 
@@ -425,6 +515,13 @@ fun AdminApp() {
                 })
             }
 
+            viewingAdvanceReceipt?.let { target ->
+                ReceiptDialog(path = target.path, onClose = { viewingAdvanceReceipt = null }, onSaveReplacement = { newPath ->
+                    save(debts.map { debt -> if (debt.name != target.debtName) debt else debt.copy(advances = debt.advances.map { a -> if (a.id == target.advanceId) a.copy(receipt = newPath) else a }) })
+                    if (target.path != newPath) File(target.path).delete()
+                    viewingAdvanceReceipt = target.copy(path = newPath)
+                })
+            }
             viewingReceipt?.let { target ->
                 ReceiptDialog(path = target.path, onClose = { viewingReceipt = null }, onSaveReplacement = { newPath ->
                     save(debts.map { debt ->
@@ -436,15 +533,48 @@ fun AdminApp() {
                     viewingReceipt = target.copy(path = newPath)
                 })
             }
+            if (particleBurst > 0) {
+                key(particleBurst) {
+                    val progress = remember { Animatable(0f) }
+                    LaunchedEffect(particleBurst) { progress.animateTo(1f, tween(650)) }
+                    Canvas(Modifier.fillMaxSize()) {
+                        val p = progress.value
+                        repeat(14) { i ->
+                            val angle = (i * (Math.PI * 2.0 / 14.0)).toFloat()
+                            val distance = 12f + 48f * p
+                            drawCircle(Color(0xFFFF394F).copy(alpha = 1f - p), radius = (3.2f * (1f - p)).coerceAtLeast(0.2f), center = particleOrigin + Offset(cos(angle) * distance, sin(angle) * distance))
+                        }
+                    }
+                }
+            }
             }
         }
     }
 }
 
 @Composable
-private fun DebtCard(debt: Debt, onClick: () -> Unit) {
+private fun DebtCard(
+    debt: Debt,
+    onClick: () -> Unit,
+    onDragStart: (Rect) -> Unit,
+    onDrag: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    dragTranslation: Offset
+) {
+    var cardRect by remember(debt.name) { mutableStateOf(Rect.Zero) }
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
+            val p = coordinates.positionInRoot()
+            cardRect = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
+        }.offset { IntOffset(dragTranslation.x.roundToInt(), dragTranslation.y.roundToInt()) }
+            .pointerInput(debt.name) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { onDragStart(cardRect) },
+                    onDrag = { change, amount -> change.consume(); onDrag(Offset(amount.x, amount.y)) },
+                    onDragEnd = onDragEnd,
+                    onDragCancel = onDragEnd
+                )
+            }.clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = CardDark),
         elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
@@ -472,7 +602,9 @@ private fun DebtDetail(
     onPay: (Installment) -> Unit,
     onViewReceipt: (Installment) -> Unit,
     onEditName: () -> Unit,
-    onDeleteDebt: () -> Unit
+    onDeleteDebt: () -> Unit,
+    onAddAdvance: () -> Unit,
+    onViewAdvanceReceipt: (Advance) -> Unit
 ) {
     var count by remember(debt.name) { mutableStateOf(if (debt.count == 0) "" else debt.count.toString()) }
     var amount by remember(debt.name) { mutableStateOf(if (debt.amount == 0L) "" else money(debt.amount)) }
@@ -512,6 +644,25 @@ private fun DebtDetail(
                             shape = RoundedCornerShape(12.dp)
                         ) { Text("GUARDAR") }
                         Text("Deuda pendiente: S/ ${money(debt.pending)}", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            item {
+                Card(shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = CardDark)) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("ADELANTOS", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                            Text("S/ ${money(debt.advances.sumOf { it.amount })}", color = Blue, fontWeight = FontWeight.Bold)
+                        }
+                        Button(onClick = onAddAdvance, modifier = Modifier.fillMaxWidth()) { Text("REGISTRAR ADELANTO") }
+                        if (debt.advances.isEmpty()) Text("Todavía no hay adelantos registrados.", color = Muted, fontSize = 13.sp)
+                        debt.advances.forEach { advance ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("S/ ${money(advance.amount)}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                                TextButton(onClick = { onViewAdvanceReceipt(advance) }) { Text("ABRIR COMPROBANTE") }
+                            }
+                        }
+                        Text("Saldo pendiente después de adelantos: S/ ${money(debt.pending)}", color = Blue, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -664,6 +815,9 @@ private fun persistDebts(context: Context, debts: List<Debt>) {
                 .put("amount", row.amount).put("paid", row.paid).put("receipt", row.receipt))
         }
         d.put("installments", rows)
+        val advances = JSONArray()
+        debt.advances.forEach { advance -> advances.put(JSONObject().put("id", advance.id).put("amount", advance.amount).put("receipt", advance.receipt)) }
+        d.put("advances", advances)
         root.put(d)
     }
     context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).edit().putString("debts", root.toString()).apply()
@@ -682,7 +836,12 @@ private fun loadDebts(context: Context): List<Debt> {
                 Installment(row.getString("id"), row.getInt("number"), row.getString("date"),
                     row.getLong("amount"), row.getBoolean("paid"), row.optString("receipt").takeIf { it.isNotBlank() && it != "null" })
             }
-            Debt(d.getString("name"), d.getInt("count"), d.getLong("amount"), d.optString("startDate"), installments)
+            val advancesJson = d.optJSONArray("advances") ?: JSONArray()
+            val advances = (0 until advancesJson.length()).map { k ->
+                val a = advancesJson.getJSONObject(k)
+                Advance(a.getString("id"), a.getLong("amount"), a.getString("receipt"))
+            }
+            Debt(d.getString("name"), d.getInt("count"), d.getLong("amount"), d.optString("startDate"), installments, advances)
         }
     }.getOrElse { Names.map { Debt(it) } }
 }
