@@ -16,7 +16,7 @@ import java.time.format.DateTimeFormatter
 
 object DebtNotifications {
     private const val REMINDER_CHANNEL = "debt_due_reminders"
-    private const val BADGE_CHANNEL = "debt_overdue_badge"
+    private const val BADGE_CHANNEL = "debt_pending_bank_badge"
     private const val DAILY_ALARM_ID = 5201
     private const val BADGE_NOTIFICATION_ID = 5202
     private const val REMINDER_BASE_ID = 5300
@@ -31,9 +31,9 @@ object DebtNotifications {
                 REMINDER_CHANNEL, "Avisos de vencimiento", NotificationManager.IMPORTANCE_DEFAULT
             ).apply { description = "Aviso a las 8:30 a. m. un día antes del vencimiento" })
             manager.createNotificationChannel(NotificationChannel(
-                BADGE_CHANNEL, "Contador de cuotas vencidas", NotificationManager.IMPORTANCE_MIN
+                BADGE_CHANNEL, "Bancos con deuda pendiente", NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Contador silencioso de cuotas vencidas en el icono de ADMIN"
+                description = "Número de bancos con saldo pendiente en el icono de ADMIN"
                 setShowBadge(true)
                 setSound(null, null)
                 enableVibration(false)
@@ -100,11 +100,7 @@ object DebtNotifications {
 
     fun updateOverdueBadge(context: Context, debts: List<Debt>? = null) {
         createChannels(context)
-        val count = debts?.sumOf { debt ->
-            debt.installments.count { row ->
-                !row.paid && (runCatching { LocalDate.parse(row.date, formatter) }.getOrNull()?.isBefore(getReferenceToday(context)) == true)
-            }
-        } ?: countOverdueFromStorage(context)
+        val count = debts?.count { it.pending > 0L } ?: countPendingDebtsFromStorage(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (count <= 0) {
             manager.cancel(BADGE_NOTIFICATION_ID)
@@ -112,7 +108,7 @@ object DebtNotifications {
             val notification = NotificationCompat.Builder(context, BADGE_CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle("ADMIN")
-                .setContentText("$count cuotas vencidas pendientes")
+                .setContentText(if (count == 1) "1 banco con deuda pendiente" else "$count bancos con deuda pendiente")
                 .setNumber(count)
                 .setBadgeIconType(NotificationCompat.BADGE_ICON_SMALL)
                 .setOngoing(true)
@@ -124,18 +120,23 @@ object DebtNotifications {
         }
     }
 
-    private fun countOverdueFromStorage(context: Context): Int {
+    private fun countPendingDebtsFromStorage(context: Context): Int {
         val raw = context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).getString("debts", null) ?: return 0
         return runCatching {
             val debts = JSONArray(raw)
             var count = 0
             for (i in 0 until debts.length()) {
-                val rows = debts.getJSONObject(i).optJSONArray("installments") ?: JSONArray()
-                for (j in 0 until rows.length()) {
+                val debt = debts.getJSONObject(i)
+                val rows = debt.optJSONArray("installments") ?: JSONArray()
+                val unpaidAmount = (0 until rows.length()).sumOf { j ->
                     val row = rows.getJSONObject(j)
-                    val date = runCatching { LocalDate.parse(row.optString("date"), formatter) }.getOrNull()
-                    if (!row.optBoolean("paid", false) && date?.isBefore(getReferenceToday(context)) == true) count++
+                    if (row.optBoolean("paid", false)) 0L else row.optLong("amount", 0L)
                 }
+                val advances = debt.optJSONArray("advances") ?: JSONArray()
+                val advanceAmount = (0 until advances.length()).sumOf { j ->
+                    advances.getJSONObject(j).optLong("amount", 0L)
+                }
+                if ((unpaidAmount - advanceAmount).coerceAtLeast(0L) > 0L) count++
             }
             count
         }.getOrDefault(0)
