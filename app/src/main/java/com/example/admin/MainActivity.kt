@@ -225,11 +225,19 @@ fun AdminApp() {
                         if (draggedDebtName != null) {
                             val nearTrash = draggedRect?.overlaps(trashBounds ?: Rect.Zero) == true
                             val trashScale by androidx.compose.animation.core.animateFloatAsState(if (nearTrash) 1.18f else 1f, label = "trashScale")
-                            val trashTilt by androidx.compose.animation.core.animateFloatAsState(if (nearTrash) 5f else 0f, label = "trashTilt")
+                            val trashShake by androidx.compose.animation.core.rememberInfiniteTransition(label = "trashShake").animateFloat(
+                                initialValue = -4f,
+                                targetValue = 4f,
+                                animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                                    animation = tween(85),
+                                    repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+                                ),
+                                label = "trashShakeAngle"
+                            )
                             Box(Modifier.size(48.dp).onGloballyPositioned { coordinates ->
                                 val p = coordinates.positionInRoot()
                                 trashBounds = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
-                            }.graphicsLayer { scaleX = trashScale; scaleY = trashScale; rotationZ = trashTilt }
+                            }.graphicsLayer { scaleX = trashScale; scaleY = trashScale; rotationZ = if (nearTrash) trashShake else 0f }
                                 .background(Color(0x332B1018), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
                                 Canvas(Modifier.size(27.dp)) {
                                     val w = size.width; val h = size.height
