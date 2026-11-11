@@ -160,8 +160,8 @@ fun AdminApp() {
     var debts by remember { mutableStateOf(loadDebts(context)) }
     var showSizeSettings by remember { mutableStateOf(false) }
     var cardSizeLevel by remember { mutableIntStateOf(context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).getInt("card_size_level", 5).coerceIn(1, 10)) }
-    var longPressedDebtName by remember { mutableStateOf<String?>(null) }
-    var debtToDelete by remember { mutableStateOf<String?>(null) }
+    var selectedDebtNames by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showDeleteSelectedConfirm by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<String?>(null) }
     var showAdvanceDialog by remember { mutableStateOf(false) }
     var advanceAmount by remember { mutableStateOf("") }
@@ -189,7 +189,9 @@ fun AdminApp() {
         DebtNotifications.scheduleDailyCheck(context)
     }
 
-    BackHandler(enabled = selected != null) { selected = null }
+    BackHandler(enabled = selected != null || selectedDebtNames.isNotEmpty()) {
+        if (selected != null) selected = null else selectedDebtNames = emptySet()
+    }
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         receiptUri = uri
@@ -233,8 +235,8 @@ fun AdminApp() {
                             IconButton(onClick = { newDebtName = ""; showCreateDebt = true }) {
                                 Text("+", fontSize = 30.sp, fontWeight = FontWeight.Normal, color = Blue)
                             }
-                            if (longPressedDebtName != null) {
-                                IconButton(onClick = { debtToDelete = longPressedDebtName; longPressedDebtName = null }) {
+                            if (selectedDebtNames.isNotEmpty()) {
+                                IconButton(onClick = { showDeleteSelectedConfirm = true }) {
                                     Text("🗑", fontSize = 22.sp, color = Color(0xFFFF394F))
                                 }
                             }
@@ -250,9 +252,14 @@ fun AdminApp() {
                             debt = debt,
                             sizeLevel = cardSizeLevel,
                             modifier = Modifier.padding(bottom = 12.dp).animateItem(),
-                            onClick = { longPressedDebtName = null; selected = debt.name },
+                            isSelected = debt.name in selectedDebtNames,
+                            onClick = {
+                                if (selectedDebtNames.isNotEmpty()) {
+                                    selectedDebtNames = if (debt.name in selectedDebtNames) selectedDebtNames - debt.name else selectedDebtNames + debt.name
+                                } else selected = debt.name
+                            },
                             onLongPress = {
-                                longPressedDebtName = debt.name
+                                selectedDebtNames = selectedDebtNames + debt.name
                                 val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createOneShot(55, VibrationEffect.DEFAULT_AMPLITUDE))
                                 else { @Suppress("DEPRECATION") vibrator.vibrate(55) }
@@ -315,18 +322,19 @@ fun AdminApp() {
                 )
             }
 
-            if (debtToDelete != null && current == null) {
+            if (showDeleteSelectedConfirm && current == null) {
                 AlertDialog(
-                    onDismissRequest = { debtToDelete = null },
+                    onDismissRequest = { showDeleteSelectedConfirm = false },
                     title = { Text("ELIMINAR") },
+                    text = { Text("¿Eliminar las ${selectedDebtNames.size} fichas seleccionadas?") },
                     confirmButton = {
                         TextButton(onClick = {
-                            val name = debtToDelete
-                            if (name != null) save(debts.filterNot { it.name == name })
-                            debtToDelete = null
+                            save(debts.filterNot { it.name in selectedDebtNames })
+                            selectedDebtNames = emptySet()
+                            showDeleteSelectedConfirm = false
                         }) { Text("SÍ") }
                     },
-                    dismissButton = { TextButton(onClick = { debtToDelete = null }) { Text("NO") } }
+                    dismissButton = { TextButton(onClick = { showDeleteSelectedConfirm = false }) { Text("NO") } }
                 )
             }
 
@@ -585,6 +593,7 @@ fun AdminApp() {
 private fun DebtCard(
     debt: Debt,
     sizeLevel: Int,
+    isSelected: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongPress: () -> Unit
@@ -596,9 +605,10 @@ private fun DebtCard(
             delay(1000)
         }
     }
-    val nextDue = debt.installments.filterNot { it.paid }
-        .mapNotNull { row -> runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull() }
-        .minOrNull()
+    val nextInstallment = debt.installments.filterNot { it.paid }
+        .mapNotNull { row -> runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull()?.let { it to row } }
+        .minByOrNull { it.first }?.second
+    val nextDue = nextInstallment?.let { runCatching { LocalDate.parse(it.date, DateFmt) }.getOrNull() }
     val dueAt = nextDue?.atTime(23, 59, 59)
     val secondsLeft = dueAt?.let { Duration.between(currentTime, it).seconds }
     val countdown = when {
@@ -632,9 +642,13 @@ private fun DebtCard(
                     detectTapGestures(onTap = { onClick() }, onLongPress = { onLongPress() })
                 },
             shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(containerColor = CardDark),
+            colors = CardDefaults.cardColors(containerColor = if (isSelected) Color(0xFF164456) else CardDark),
             elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-            border = BorderStroke(1.dp, if (hasOverdue) Color(0xFFFF4D5A) else CyanBorder)
+            border = BorderStroke(if (isSelected) 2.dp else 1.dp, when {
+                isSelected -> Blue
+                hasOverdue -> Color(0xFFFF4D5A)
+                else -> CyanBorder
+            })
         ) {
             Column(Modifier.padding((18f * scale).dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -651,6 +665,12 @@ private fun DebtCard(
                     Spacer(Modifier.width(8.dp))
                     Text(countdown, color = if (secondsLeft != null && secondsLeft <= 0L) Color(0xFFFF4D5A) else Blue, fontSize = (11f * scale).sp, fontWeight = FontWeight.SemiBold)
                 }
+                Text(
+                    "Próximo pago (S/ ${nextInstallment?.let { money(it.amount) } ?: "0.00"})",
+                    color = Blue,
+                    fontSize = (12f * scale).sp,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }
@@ -672,6 +692,7 @@ private fun DebtDetail(
     var amount by remember(debt.name) { mutableStateOf(if (debt.amount == 0L) "" else money(debt.amount)) }
     var date by remember(debt.name) { mutableStateOf(if (debt.startDate.isBlank()) LocalDate.now().format(DateFmt) else debt.startDate) }
     var dateError by remember { mutableStateOf(false) }
+    var showDebtConfiguration by remember(debt.name) { mutableStateOf(true) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -687,24 +708,31 @@ private fun DebtDetail(
             item {
                 Card(shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = CardDark)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                        Text("Configuración de deuda", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                        OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Número de cuotas") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(amount, { amount = it.filter { c -> c.isDigit() || c == '.' || c == ',' }.replace(',', '.') }, label = { Text("Monto por cuota (S/)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(date, { date = it }, label = { Text("Fecha inicial (dd/MM/yyyy)") }, placeholder = { Text("08/11/2026") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                        if (dateError) Text("Ingresa cuotas, monto y fecha válidos.", color = Color.Red, fontSize = 12.sp)
-                        Button(
-                            onClick = {
-                                val n = count.toIntOrNull()
-                                val cents = parseMoney(amount)
-                                val parsed = runCatching { LocalDate.parse(date, DateFmt) }.getOrNull()
-                                if (n != null && n > 0 && cents != null && cents > 0 && parsed != null) {
-                                    onEdit(n, cents, date)
-                                    dateError = false
-                                } else dateError = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) { Text("GUARDAR") }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Configuración de deuda", fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { showDebtConfiguration = !showDebtConfiguration }) {
+                                Text(if (showDebtConfiguration) "👁" else "👁̸", fontSize = 21.sp, color = Blue)
+                            }
+                        }
+                        if (showDebtConfiguration) {
+                            OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Número de cuotas") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(amount, { amount = it.filter { c -> c.isDigit() || c == '.' || c == ',' }.replace(',', '.') }, label = { Text("Monto por cuota (S/)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(date, { date = it }, label = { Text("Fecha inicial (dd/MM/yyyy)") }, placeholder = { Text("08/11/2026") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            if (dateError) Text("Ingresa cuotas, monto y fecha válidos.", color = Color.Red, fontSize = 12.sp)
+                            Button(
+                                onClick = {
+                                    val n = count.toIntOrNull()
+                                    val cents = parseMoney(amount)
+                                    val parsed = runCatching { LocalDate.parse(date, DateFmt) }.getOrNull()
+                                    if (n != null && n > 0 && cents != null && cents > 0 && parsed != null) {
+                                        onEdit(n, cents, date)
+                                        dateError = false
+                                    } else dateError = true
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text("GUARDAR") }
+                        }
                         Text("Deuda pendiente: S/ ${money(debt.pending)}", fontWeight = FontWeight.SemiBold)
                     }
                 }
