@@ -25,7 +25,11 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.awaitPointerEvent
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -44,6 +48,7 @@ import androidx.compose.foundation.Canvas
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -579,12 +584,35 @@ private fun DebtCard(
             cardRect = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
         }.offset { IntOffset(dragTranslation.x.roundToInt(), dragTranslation.y.roundToInt()) }
             .pointerInput(debt.name) {
-                detectDragGesturesAfterLongPress(
-                    onDragStart = { onDragStart(cardRect) },
-                    onDrag = { change, amount -> change.consume(); onDrag(Offset(amount.x, amount.y)) },
-                    onDragEnd = onDragEnd,
-                    onDragCancel = onDragEnd
-                )
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    delay(1500)
+                    var started = false
+                    awaitPointerEventScope {
+                        val firstAfterHold = awaitPointerEvent(PointerEventPass.Initial)
+                        val firstChange = firstAfterHold.changes.firstOrNull { it.id == down.id }
+                        if (firstChange != null && firstChange.pressed) {
+                            started = true
+                            onDragStart(cardRect)
+                            val firstDelta = firstChange.positionChange()
+                            if (firstDelta != Offset.Zero) {
+                                firstChange.consume()
+                                onDrag(Offset(firstDelta.x, firstDelta.y))
+                            }
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) break
+                                val delta = change.positionChange()
+                                if (delta != Offset.Zero) {
+                                    change.consume()
+                                    onDrag(Offset(delta.x, delta.y))
+                                }
+                            }
+                        }
+                    }
+                    if (started) onDragEnd()
+                }
             }.clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = CardDark),
