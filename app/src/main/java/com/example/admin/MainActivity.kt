@@ -25,11 +25,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.awaitPointerEvent
-import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -48,7 +44,6 @@ import androidx.compose.foundation.Canvas
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -58,10 +53,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
@@ -578,41 +576,25 @@ private fun DebtCard(
     dragTranslation: Offset
 ) {
     var cardRect by remember(debt.name) { mutableStateOf(Rect.Zero) }
+    val baseViewConfiguration = LocalViewConfiguration.current
+    val longPressViewConfiguration = remember(baseViewConfiguration) {
+        object : ViewConfiguration by baseViewConfiguration {
+            override val longPressTimeoutMillis: Long = 1500L
+        }
+    }
+    CompositionLocalProvider(LocalViewConfiguration provides longPressViewConfiguration) {
     Card(
         modifier = Modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
             val p = coordinates.positionInRoot()
             cardRect = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
         }.offset { IntOffset(dragTranslation.x.roundToInt(), dragTranslation.y.roundToInt()) }
             .pointerInput(debt.name) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    delay(1500)
-                    var started = false
-                    awaitPointerEventScope {
-                        val firstAfterHold = awaitPointerEvent(PointerEventPass.Initial)
-                        val firstChange = firstAfterHold.changes.firstOrNull { it.id == down.id }
-                        if (firstChange != null && firstChange.pressed) {
-                            started = true
-                            onDragStart(cardRect)
-                            val firstDelta = firstChange.positionChange()
-                            if (firstDelta != Offset.Zero) {
-                                firstChange.consume()
-                                onDrag(Offset(firstDelta.x, firstDelta.y))
-                            }
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!change.pressed) break
-                                val delta = change.positionChange()
-                                if (delta != Offset.Zero) {
-                                    change.consume()
-                                    onDrag(Offset(delta.x, delta.y))
-                                }
-                            }
-                        }
-                    }
-                    if (started) onDragEnd()
-                }
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { onDragStart(cardRect) },
+                    onDrag = { change, amount -> change.consume(); onDrag(Offset(amount.x, amount.y)) },
+                    onDragEnd = onDragEnd,
+                    onDragCancel = onDragEnd
+                )
             }.clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = CardDark),
@@ -631,6 +613,7 @@ private fun DebtCard(
             Text("S/ ${money(debt.pending)}", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = Ink)
             Text("Deuda pendiente", color = Muted, fontSize = 13.sp)
         }
+    }
     }
 }
 
