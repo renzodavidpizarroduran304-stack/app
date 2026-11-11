@@ -24,6 +24,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.blur
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.ui.input.pointer.pointerInput
@@ -154,11 +155,10 @@ class MainActivity : ComponentActivity() {
 fun AdminApp() {
     val context = LocalContext.current
     var debts by remember { mutableStateOf(loadDebts(context)) }
-    var referenceDate by remember {
-        mutableStateOf(DebtNotifications.getReferenceToday(context).format(DateFmt))
-    }
-    var referenceDateDraft by remember { mutableStateOf(referenceDate) }
-    var referenceDateError by remember { mutableStateOf(false) }
+    var showSizeSettings by remember { mutableStateOf(false) }
+    var cardSizeLevel by remember { mutableIntStateOf(context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).getInt("card_size_level", 5).coerceIn(1, 10)) }
+    val cardBounds = remember { mutableStateMapOf<String, Rect>() }
+    var hoveredDebtName by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<String?>(null) }
     var showAdvanceDialog by remember { mutableStateOf(false) }
     var advanceAmount by remember { mutableStateOf("") }
@@ -217,81 +217,71 @@ fun AdminApp() {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0A2231), BgDark, Color(0xFF06131D)))).statusBarsPadding().navigationBarsPadding()) {
             val current = debts.firstOrNull { it.name == selected }
             if (current == null) {
-                Column(Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState())) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.weight(1f)) {
-                            Text("ADMIN", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink)
-                            Text("Control de deudas", color = Muted, fontSize = 14.sp)
-                        }
-                        IconButton(onClick = { newDebtName = ""; showCreateDebt = true }) {
-                            Text("+", fontSize = 30.sp, fontWeight = FontWeight.Normal, color = Blue)
-                        }
-                        if (draggedDebtName != null) {
-                            val nearTrash = draggedRect?.overlaps(trashBounds ?: Rect.Zero) == true
-                            val trashScale by androidx.compose.animation.core.animateFloatAsState(if (nearTrash) 1.18f else 1f, label = "trashScale")
-                            val trashShake by androidx.compose.animation.core.rememberInfiniteTransition(label = "trashShake").animateFloat(
-                                initialValue = -4f,
-                                targetValue = 4f,
-                                animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-                                    animation = tween(85),
-                                    repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
-                                ),
-                                label = "trashShakeAngle"
-                            )
-                            Box(Modifier.size(48.dp).onGloballyPositioned { coordinates ->
-                                val p = coordinates.positionInRoot()
-                                trashBounds = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
-                            }.graphicsLayer { scaleX = trashScale; scaleY = trashScale; rotationZ = if (nearTrash) trashShake else 0f }
-                                .background(Color(0x332B1018), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                                Canvas(Modifier.size(27.dp)) {
-                                    val w = size.width; val h = size.height
-                                    drawLine(Color(0xFFFF394F), Offset(w*0.22f,h*0.22f), Offset(w*0.78f,h*0.22f), 2.6.dp.toPx())
-                                    drawLine(Color(0xFFFF394F), Offset(w*0.38f,h*0.12f), Offset(w*0.62f,h*0.12f), 2.6.dp.toPx())
-                                    drawRoundRect(Color(0xFFFF394F), Offset(w*0.28f,h*0.3f), Size(w*0.44f,h*0.58f), androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()), style = Stroke(2.4.dp.toPx()))
-                                    drawLine(Color(0xFFFF394F), Offset(w*0.43f,h*0.4f), Offset(w*0.43f,h*0.78f), 1.7.dp.toPx())
-                                    drawLine(Color(0xFFFF394F), Offset(w*0.57f,h*0.4f), Offset(w*0.57f,h*0.78f), 1.7.dp.toPx())
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 20.dp)
+                        .blur(if (showSizeSettings) 8.dp else 0.dp),
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
+                    item(key = "admin-header") {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Text("ADMIN", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Ink)
+                                IconButton(onClick = { showSizeSettings = true }) {
+                                    Text("⚙", fontSize = 22.sp, color = Blue)
                                 }
                             }
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Card(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = CardDark)) {
-                        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("FECHA ACTUAL", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                OutlinedTextField(
-                                    value = referenceDateDraft,
-                                    onValueChange = { referenceDateDraft = it; referenceDateError = false },
-                                    modifier = Modifier.weight(1f),
-                                    label = { Text("dd/MM/yyyy") },
-                                    singleLine = true,
-                                    isError = referenceDateError,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done)
-                                )
-                                TextButton(onClick = {
-                                    val parsed = runCatching { LocalDate.parse(referenceDateDraft, DateFmt) }.getOrNull()
-                                    if (parsed == null) referenceDateError = true
-                                    else {
-                                        referenceDate = parsed.format(DateFmt)
-                                        referenceDateDraft = referenceDate
-                                        referenceDateError = false
-                                        context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).edit()
-                                            .putString("reference_date", referenceDate).putLong("reference_date_anchor", System.currentTimeMillis()).apply()
-                                    }
-                                }) { Text("GUARDAR") }
+                            IconButton(onClick = { newDebtName = ""; showCreateDebt = true }) {
+                                Text("+", fontSize = 30.sp, fontWeight = FontWeight.Normal, color = Blue)
                             }
-                            val annualDate = runCatching { LocalDate.parse(referenceDate, DateFmt) }.getOrNull() ?: LocalDate.now()
-                            Text("Periodo anual: 01/01/" + annualDate.year + " – 31/12/" + annualDate.year, color = Muted, fontSize = 12.sp)
-                            if (referenceDateError) Text("Fecha no válida. Usa dd/MM/yyyy.", color = Color(0xFFFF6B6B), fontSize = 12.sp)
+                            Spacer(Modifier.width(48.dp))
+                        }
+                        Spacer(Modifier.height(12.dp))
+                    }
+                    item(key = "debts-heading") {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
+                            Text("DEUDAS", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Ink)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Control de deudas", color = Muted, fontSize = 13.sp)
                         }
                     }
-                    Spacer(Modifier.height(12.dp))
-                    debts.forEach { debt ->
+                    items(debts, key = { it.name }) { debt ->
                         DebtCard(
                             debt = debt,
+                            sizeLevel = cardSizeLevel,
+                            modifier = Modifier.padding(bottom = 12.dp).animateItem(),
+                            onPositioned = { rect ->
+                                cardBounds[debt.name] = rect
+                                if (draggedDebtName == debt.name) originalDragRect = rect
+                            },
                             onClick = { if (draggedDebtName == null) selected = debt.name },
-                            onDragStart = { rect -> draggedDebtName = debt.name; originalDragRect = rect; draggedRect = rect },
-                            onDrag = { delta -> draggedRect = draggedRect?.translate(delta) },
+                            onDragStart = { rect ->
+                                draggedDebtName = debt.name
+                                originalDragRect = rect
+                                draggedRect = rect
+                                hoveredDebtName = null
+                            },
+                            onDrag = { delta ->
+                                val movedRect = draggedRect?.translate(delta)
+                                draggedRect = movedRect
+                                val movingName = draggedDebtName
+                                val hovered = if (movedRect == null || movingName == null) null else
+                                    debts.firstOrNull { candidate ->
+                                        candidate.name != movingName && cardBounds[candidate.name]?.contains(movedRect.center) == true
+                                    }
+                                hoveredDebtName = hovered?.name
+                                if (hovered != null && movingName != null) {
+                                    val next = debts.toMutableList()
+                                    val from = next.indexOfFirst { it.name == movingName }
+                                    if (from >= 0) {
+                                        val moving = next.removeAt(from)
+                                        val targetIndex = next.indexOfFirst { it.name == hovered.name }
+                                        if (targetIndex >= 0) {
+                                            next.add(targetIndex, moving)
+                                            if (next != debts) debts = next
+                                        }
+                                    }
+                                }
+                            },
                             onDragEnd = {
                                 val target = draggedDebtName
                                 val rect = draggedRect
@@ -300,18 +290,51 @@ fun AdminApp() {
                                     particleOrigin = Offset(trash.center.x, trash.center.y)
                                     save(debts.filterNot { it.name == target })
                                     particleBurst++
+                                } else {
+                                    persistDebts(context, debts)
+                                    DebtNotifications.updateOverdueBadge(context, debts)
                                 }
-                                draggedDebtName = null; draggedRect = null; originalDragRect = null
+                                draggedDebtName = null
+                                draggedRect = null
+                                originalDragRect = null
+                                hoveredDebtName = null
                             },
-                            dragTranslation = if (draggedDebtName == debt.name && draggedRect != null && originalDragRect != null) draggedRect!!.topLeft - originalDragRect!!.topLeft else Offset.Zero
+                            dragTranslation = if (draggedDebtName == debt.name && draggedRect != null && originalDragRect != null) draggedRect!!.topLeft - originalDragRect!!.topLeft else Offset.Zero,
+                            pushDown = hoveredDebtName == debt.name
                         )
-                        Spacer(Modifier.height(12.dp))
                     }
-                    Card(shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
-                        Column(Modifier.fillMaxWidth().padding(20.dp)) {
-                            Text("DEUDA TOTAL", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text("S/ " + money(debts.sumOf { it.pending }), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    item(key = "total-debt") {
+                        Card(shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+                            Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                                Text("DEUDA TOTAL", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text("S/ " + money(debts.sumOf { it.pending }), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Ink)
+                            }
                         }
+                    }
+                }
+                Box(
+                    Modifier.align(Alignment.TopEnd).padding(top = 20.dp, end = 20.dp).size(48.dp)
+                        .onGloballyPositioned { coordinates ->
+                            val p = coordinates.positionInRoot()
+                            trashBounds = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
+                        }
+                        .graphicsLayer {
+                            val nearTrash = draggedRect?.overlaps(trashBounds ?: Rect.Zero) == true
+                            val scale = if (nearTrash) 1.18f else 1f
+                            scaleX = scale
+                            scaleY = scale
+                        }
+                        .background(Color(0x332B1018), RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(Modifier.size(27.dp)) {
+                        val w = size.width
+                        val h = size.height
+                        drawLine(Color(0xFFFF394F), Offset(w*0.22f,h*0.22f), Offset(w*0.78f,h*0.22f), 2.6.dp.toPx())
+                        drawLine(Color(0xFFFF394F), Offset(w*0.38f,h*0.12f), Offset(w*0.62f,h*0.12f), 2.6.dp.toPx())
+                        drawRoundRect(Color(0xFFFF394F), Offset(w*0.28f,h*0.3f), Size(w*0.44f,h*0.58f), androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()), style = Stroke(2.4.dp.toPx()))
+                        drawLine(Color(0xFFFF394F), Offset(w*0.43f,h*0.4f), Offset(w*0.43f,h*0.78f), 1.7.dp.toPx())
+                        drawLine(Color(0xFFFF394F), Offset(w*0.57f,h*0.4f), Offset(w*0.57f,h*0.78f), 1.7.dp.toPx())
                     }
                 }
             } else {
@@ -336,6 +359,41 @@ fun AdminApp() {
                     onAddAdvance = { showAdvanceDialog = true; advanceAmount = ""; advanceReceiptUri = null },
                     onViewAdvanceReceipt = { advance -> viewingAdvanceReceipt = AdvanceReceiptTarget(current.name, advance.id, advance.receipt) }
                 )
+            }
+
+            if (showSizeSettings && current == null) {
+                Dialog(
+                    onDismissRequest = { showSizeSettings = false },
+                    properties = DialogProperties(usePlatformDefaultWidth = false)
+                ) {
+                    Card(
+                        Modifier.fillMaxWidth(0.88f),
+                        shape = RoundedCornerShape(18.dp),
+                        border = BorderStroke(1.dp, CyanBorder),
+                        colors = CardDefaults.cardColors(containerColor = CardDark)
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            Text("Tamaño de los recuadros", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Slider(
+                                    value = cardSizeLevel.toFloat(),
+                                    onValueChange = { value ->
+                                        cardSizeLevel = value.roundToInt().coerceIn(1, 10)
+                                        context.getSharedPreferences("admin_data", Context.MODE_PRIVATE).edit()
+                                            .putInt("card_size_level", cardSizeLevel).apply()
+                                    },
+                                    valueRange = 1f..10f,
+                                    steps = 8,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(cardSizeLevel.toString(), color = Blue, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            }
+                            TextButton(onClick = { showSizeSettings = false }, modifier = Modifier.align(Alignment.End)) {
+                                Text("CERRAR")
+                            }
+                        }
+                    }
+                }
             }
 
             when (manageAction) {
@@ -433,7 +491,7 @@ fun AdminApp() {
             if (showCreateDebt) {
                 AlertDialog(
                     onDismissRequest = { showCreateDebt = false },
-                    title = { Text("Crear nueva deuda") },
+                    title = { Text("Añadir nuevo (deuda)") },
                     text = {
                         OutlinedTextField(value = newDebtName, onValueChange = { newDebtName = it },
                             label = { Text("Nombre de la deuda") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -570,24 +628,30 @@ fun AdminApp() {
 @Composable
 private fun DebtCard(
     debt: Debt,
+    sizeLevel: Int,
+    modifier: Modifier = Modifier,
+    onPositioned: (Rect) -> Unit,
     onClick: () -> Unit,
     onDragStart: (Rect) -> Unit,
     onDrag: (Offset) -> Unit,
     onDragEnd: () -> Unit,
-    dragTranslation: Offset
+    dragTranslation: Offset,
+    pushDown: Boolean
 ) {
     var cardRect by remember(debt.name) { mutableStateOf(Rect.Zero) }
     val baseViewConfiguration = LocalViewConfiguration.current
     val longPressViewConfiguration = remember(baseViewConfiguration) {
         object : ViewConfiguration by baseViewConfiguration {
-            override val longPressTimeoutMillis: Long = 1500L
+            override val longPressTimeoutMillis: Long = 500L
         }
     }
     CompositionLocalProvider(LocalViewConfiguration provides longPressViewConfiguration) {
+    val scale = 0.82f + (sizeLevel - 1) * 0.04f
     Card(
-        modifier = Modifier.fillMaxWidth().onGloballyPositioned { coordinates ->
+        modifier = modifier.fillMaxWidth().padding(top = if (pushDown) 54.dp else 0.dp).onGloballyPositioned { coordinates ->
             val p = coordinates.positionInRoot()
             cardRect = Rect(p.x, p.y, p.x + coordinates.size.width, p.y + coordinates.size.height)
+            onPositioned(cardRect)
         }.offset { IntOffset(dragTranslation.x.roundToInt(), dragTranslation.y.roundToInt()) }
             .pointerInput(debt.name) {
                 detectDragGesturesAfterLongPress(
@@ -600,19 +664,24 @@ private fun DebtCard(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = CardDark),
         elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-        border = BorderStroke(1.dp, CyanBorder)
+        border = BorderStroke(1.dp, if (debt.installments.any { row -> !row.paid && (runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull()?.isBefore(LocalDate.now()) == true) }) Color(0xFFFF4D5A) else CyanBorder)
     ) {
-        Column(Modifier.padding(18.dp)) {
+        Column(Modifier.padding((18f * scale).dp)) {
             val overdueCount = debt.installments.count { row ->
                 !row.paid && (runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull()?.isBefore(LocalDate.now()) == true)
             }
+            val totalInstallments = debt.installments.size.takeIf { it > 0 } ?: debt.count
+            val paidInstallments = debt.installments.count { it.paid }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(debt.name, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.weight(1f))
-                if (overdueCount > 0) Text("! " + overdueCount, color = Color(0xFFFF4D5A), fontWeight = FontWeight.Bold)
+                Text(debt.name, fontSize = (18f * scale).sp, fontWeight = FontWeight.Bold, color = Ink)
+                Text(" (S/ ${money(debt.total)})", fontSize = (13f * scale).sp, fontWeight = FontWeight.SemiBold, color = Blue)
+                Spacer(Modifier.weight(1f))
+                if (totalInstallments > 0) Text("$paidInstallments/$totalInstallments", fontSize = (13f * scale).sp, fontWeight = FontWeight.Bold, color = Ink)
+                if (overdueCount > 0) Text("  ! $overdueCount", color = Color(0xFFFF4D5A), fontWeight = FontWeight.Bold)
             }
-            Spacer(Modifier.height(8.dp))
-            Text("S/ ${money(debt.pending)}", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = Ink)
-            Text("Deuda pendiente", color = Muted, fontSize = 13.sp)
+            Spacer(Modifier.height((8f * scale).dp))
+            Text("S/ ${money(debt.pending)}", fontSize = (25f * scale).sp, fontWeight = FontWeight.Bold, color = Ink)
+            Text("Deuda pendiente", color = Muted, fontSize = (13f * scale).sp)
         }
     }
     }
@@ -631,7 +700,7 @@ private fun DebtDetail(
 ) {
     var count by remember(debt.name) { mutableStateOf(if (debt.count == 0) "" else debt.count.toString()) }
     var amount by remember(debt.name) { mutableStateOf(if (debt.amount == 0L) "" else money(debt.amount)) }
-    var date by remember(debt.name) { mutableStateOf(debt.startDate) }
+    var date by remember(debt.name) { mutableStateOf(if (debt.startDate.isBlank()) LocalDate.now().format(DateFmt) else debt.startDate) }
     var dateError by remember { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
