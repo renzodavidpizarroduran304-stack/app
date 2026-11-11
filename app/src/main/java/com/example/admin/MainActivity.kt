@@ -21,6 +21,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -57,12 +59,13 @@ import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.util.UUID
 
-private val Blue = Color(0xFF65BCEB)
-private val Ink = Color(0xFFE8EDF3)
-private val Muted = Color(0xFFA0AAB6)
-private val BgDark = Color(0xFF101419)
-private val CardDark = Color(0xFF1B232C)
-private val SurfaceDark = Color(0xFF222D38)
+private val Blue = Color(0xFF45D9F2)
+private val Ink = Color(0xFFF1FAFF)
+private val Muted = Color(0xFF9BB8C7)
+private val BgDark = Color(0xFF071722)
+private val CardDark = Color(0xE6163040)
+private val SurfaceDark = Color(0xFF102B3A)
+private val CyanBorder = Color(0x5545D9F2)
 private val DateFmt = DateTimeFormatter.ofPattern("dd/MM/yyyy")
 private val Names = listOf("ISUR", "CAJA", "BCP", "KAELA")
 
@@ -95,8 +98,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = android.graphics.Color.rgb(16, 20, 25)
-        window.navigationBarColor = android.graphics.Color.rgb(16, 20, 25)
+        window.statusBarColor = android.graphics.Color.rgb(7, 23, 34)
+        window.navigationBarColor = android.graphics.Color.rgb(7, 23, 34)
         WindowInsetsControllerCompat(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
@@ -165,11 +168,12 @@ fun AdminApp() {
             onSurface = Ink,
             secondary = Blue,
             surfaceVariant = SurfaceDark,
-            onSurfaceVariant = Muted
+            onSurfaceVariant = Muted,
+            outline = Blue
         )
     ) {
         Surface(Modifier.fillMaxSize(), color = BgDark) {
-            Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0A2231), BgDark, Color(0xFF06131D)))).statusBarsPadding().navigationBarsPadding()) {
             val current = debts.firstOrNull { it.name == selected }
             if (current == null) {
                 Column(Modifier.fillMaxSize().padding(20.dp)) {
@@ -184,7 +188,7 @@ fun AdminApp() {
                         TextButton(onClick = { showConfig = true }) { Text("CONFIGURAR") }
                     }
                     Spacer(Modifier.height(12.dp))
-                    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = CardDark)) {
+                    Card(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = CardDark)) {
                         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("FECHA ACTUAL", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -220,7 +224,7 @@ fun AdminApp() {
                         Spacer(Modifier.height(12.dp))
                     }
                     Spacer(Modifier.weight(1f))
-                    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
+                    Card(shape = RoundedCornerShape(18.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = SurfaceDark)) {
                         Column(Modifier.fillMaxWidth().padding(20.dp)) {
                             Text("DEUDA TOTAL", color = Muted, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                             Text("S/ " + money(debts.sumOf { it.pending }), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = Ink)
@@ -443,7 +447,8 @@ private fun DebtCard(debt: Debt, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = CardDark),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+        border = BorderStroke(1.dp, CyanBorder)
     ) {
         Column(Modifier.padding(18.dp)) {
             val overdueCount = debt.installments.count { row ->
@@ -486,7 +491,7 @@ private fun DebtDetail(
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
             item {
-                Card(shape = RoundedCornerShape(16.dp)) {
+                Card(shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = CardDark)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                         Text("Configuración de deuda", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                         OutlinedTextField(count, { count = it.filter(Char::isDigit) }, label = { Text("Número de cuotas") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -515,7 +520,7 @@ private fun DebtDetail(
                 item { Text("Configura la deuda para generar las cuotas.", color = Muted) }
             }
             items(debt.installments, key = { it.id }) { installment ->
-                Card(shape = RoundedCornerShape(14.dp)) {
+                Card(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = CardDark)) {
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Cuota ${installment.number}", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f),
@@ -570,7 +575,7 @@ private fun ReceiptDialog(path: String, onClose: () -> Unit, onSaveReplacement: 
     }
     fun receiptContentUri(): Uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", File(displayedPath))
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Card(Modifier.fillMaxWidth(0.94f), shape = RoundedCornerShape(16.dp)) {
+        Card(Modifier.fillMaxWidth(0.94f), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, CyanBorder), colors = CardDefaults.cardColors(containerColor = CardDark)) {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(onClick = onClose) { Text("×", fontSize = 28.sp) }
