@@ -625,7 +625,8 @@ private fun DebtCard(
     val secondsLeft = dueAt?.let { Duration.between(currentTime, it).seconds }
     val countdown = when {
         dueAt == null -> "Sin cuotas pendientes"
-        secondsLeft == null || secondsLeft <= 0L -> "VENCIDA"
+        secondsLeft == null -> "Sin cuotas pendientes"
+        secondsLeft <= 0L -> "VENCIDA (hace ${formatElapsed((-secondsLeft).coerceAtLeast(0L))})"
         else -> {
             val days = secondsLeft / 86400
             val hours = (secondsLeft % 86400) / 3600
@@ -738,7 +739,7 @@ private fun DebtDetail(
                             Text("Configuración de deuda", fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f))
                             IconButton(onClick = { showDebtConfiguration = !showDebtConfiguration }) {
                                 Text(
-                                    if (showDebtConfiguration) "👁" else "👁̸",
+                                    "👁",
                                     fontSize = 21.sp,
                                     color = Blue,
                                     modifier = Modifier.graphicsLayer {
@@ -1103,7 +1104,7 @@ private fun formatElapsed(totalSeconds: Long): String {
     val hours = (totalSeconds % 86400) / 3600
     val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
-    return "${days}d ${hours}h ${minutes}m ${seconds}s"
+    return "${days} ${if (days == 1L) "día" else "días"}, ${hours} ${if (hours == 1L) "hora" else "horas"}, ${minutes} ${if (minutes == 1L) "minuto" else "minutos"} y ${seconds} ${if (seconds == 1L) "segundo" else "segundos"}
 }
 
 private fun generateInstallments(count: Int, amount: Long, startText: String): List<Installment> {
