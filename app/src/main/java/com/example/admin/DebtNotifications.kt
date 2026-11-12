@@ -78,7 +78,7 @@ object DebtNotifications {
                     for (j in 0 until rows.length()) {
                         val row = rows.getJSONObject(j)
                         val date = runCatching { LocalDate.parse(row.optString("date"), formatter) }.getOrNull()
-                        if (!row.optBoolean("paid", false) && date == tomorrow) {
+                        if (!row.optBoolean("paid", false) && !row.optBoolean("excluded", false) && date == tomorrow) {
                             val id = (debt.optString("name") + row.optString("id")).hashCode()
                             val notification = NotificationCompat.Builder(context, REMINDER_CHANNEL)
                                 .setSmallIcon(android.R.drawable.ic_dialog_info)
