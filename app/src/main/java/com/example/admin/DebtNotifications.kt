@@ -130,7 +130,7 @@ object DebtNotifications {
                 val rows = debt.optJSONArray("installments") ?: JSONArray()
                 val unpaidAmount = (0 until rows.length()).sumOf { j ->
                     val row = rows.getJSONObject(j)
-                    if (row.optBoolean("paid", false)) 0L else row.optLong("amount", 0L)
+                    if (row.optBoolean("paid", false) || row.optBoolean("excluded", false)) 0L else row.optLong("amount", 0L)
                 }
                 val advances = debt.optJSONArray("advances") ?: JSONArray()
                 val advanceAmount = (0 until advances.length()).sumOf { j ->
