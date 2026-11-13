@@ -78,7 +78,7 @@ object DebtNotifications {
                     for (j in 0 until rows.length()) {
                         val row = rows.getJSONObject(j)
                         val date = runCatching { LocalDate.parse(row.optString("date"), formatter) }.getOrNull()
-                        if (!row.optBoolean("paid", false) && date == tomorrow) {
+                        if (!row.optBoolean("paid", false) && !row.optBoolean("excluded", false) && date == tomorrow) {
                             val id = (debt.optString("name") + row.optString("id")).hashCode()
                             val notification = NotificationCompat.Builder(context, REMINDER_CHANNEL)
                                 .setSmallIcon(android.R.drawable.ic_dialog_info)
@@ -130,7 +130,7 @@ object DebtNotifications {
                 val rows = debt.optJSONArray("installments") ?: JSONArray()
                 val unpaidAmount = (0 until rows.length()).sumOf { j ->
                     val row = rows.getJSONObject(j)
-                    if (row.optBoolean("paid", false)) 0L else row.optLong("amount", 0L)
+                    if (row.optBoolean("paid", false) || row.optBoolean("excluded", false)) 0L else row.optLong("amount", 0L)
                 }
                 val advances = debt.optJSONArray("advances") ?: JSONArray()
                 val advanceAmount = (0 until advances.length()).sumOf { j ->

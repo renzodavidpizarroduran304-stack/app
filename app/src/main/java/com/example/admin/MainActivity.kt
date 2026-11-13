@@ -111,7 +111,8 @@ data class Installment(
     val date: String,
     val amount: Long,
     val paid: Boolean = false,
-    val receipt: String? = null
+    val receipt: String? = null,
+    val excluded: Boolean = false
 )
 data class ReceiptTarget(val debtName: String, val installmentId: String, val path: String)
 data class Advance(val id: String, val amount: Long, val receipt: String)
@@ -126,7 +127,7 @@ data class Debt(
     val advances: List<Advance> = emptyList()
 ) {
     val total: Long get() = count.toLong() * amount
-    val pending: Long get() = (installments.filterNot { it.paid }.sumOf { it.amount } - advances.sumOf { it.amount }).coerceAtLeast(0L)
+    val pending: Long get() = (installments.filterNot { it.paid || it.excluded }.sumOf { it.amount } - advances.sumOf { it.amount }).coerceAtLeast(0L)
 }
 
 class MainActivity : ComponentActivity() {
@@ -300,11 +301,11 @@ fun AdminApp() {
                 DebtDetail(
                     debt = current,
                     onEdit = { count, amount, date ->
-                        val oldPaid = current.installments.filter { it.paid }
+                        val oldRows = current.installments.associateBy { it.number }
                         val generated = generateInstallments(count, amount, date)
                         val preserved = generated.map { fresh ->
-                            oldPaid.firstOrNull { it.number == fresh.number }?.let {
-                                fresh.copy(paid = true, receipt = it.receipt)
+                            oldRows[fresh.number]?.let { old ->
+                                fresh.copy(paid = old.paid, receipt = old.receipt, excluded = old.excluded)
                             } ?: fresh
                         }
                         save(debts.map { if (it.name == current.name) current.copy(count = count, amount = amount, startDate = date, installments = preserved) else it })
@@ -316,7 +317,25 @@ fun AdminApp() {
                     onEditName = { manageAction = "edit_select" },
                     onAddAdvance = { showAdvanceDialog = true; advanceAmount = ""; advanceReceiptUri = null },
                     onViewAdvanceReceipt = { advance -> viewingAdvanceReceipt = AdvanceReceiptTarget(current.name, advance.id, advance.receipt) },
-                    onDeleteAdvance = { advance -> advanceToDelete = advance }
+                    onDeleteAdvance = { advance -> advanceToDelete = advance },
+                    allDebts = debts,
+                    onSetInstallmentsExcluded = { selectedIds ->
+                        save(debts.map { debt ->
+                            val ids = selectedIds[debt.name].orEmpty()
+                            debt.copy(installments = debt.installments.map { row ->
+                                if (row.id in ids && !row.paid) row.copy(excluded = true) else row
+                            })
+                        })
+                    },
+                    onToggleExcluded = { debtName, installmentId, excluded ->
+                        save(debts.map { debt ->
+                            if (debt.name != debtName) debt else debt.copy(
+                                installments = debt.installments.map { row ->
+                                    if (row.id == installmentId) row.copy(excluded = excluded) else row
+                                }
+                            )
+                        })
+                    }
                 )
             }
 
@@ -598,7 +617,7 @@ private fun DebtCard(
             delay(1000)
         }
     }
-    val nextInstallment = debt.installments.filterNot { it.paid }
+    val nextInstallment = debt.installments.filterNot { it.paid || it.excluded }
         .mapNotNull { row -> runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull()?.let { it to row } }
         .minByOrNull { it.first }?.second
     val nextDue = nextInstallment?.let { runCatching { LocalDate.parse(it.date, DateFmt) }.getOrNull() }
@@ -606,7 +625,8 @@ private fun DebtCard(
     val secondsLeft = dueAt?.let { Duration.between(currentTime, it).seconds }
     val countdown = when {
         dueAt == null -> "Sin cuotas pendientes"
-        secondsLeft == null || secondsLeft <= 0L -> "VENCIDA"
+        secondsLeft == null -> "Sin cuotas pendientes"
+        secondsLeft <= 0L -> "VENCIDA (hace ${formatElapsed((-secondsLeft).coerceAtLeast(0L))})"
         else -> {
             val days = secondsLeft / 86400
             val hours = (secondsLeft % 86400) / 3600
@@ -616,11 +636,12 @@ private fun DebtCard(
         }
     }
     val scale = 0.82f + (sizeLevel - 1) * 0.04f
-    val overdueCount = debt.installments.count { row ->
+    val consideredInstallments = debt.installments.filterNot { it.excluded }
+    val overdueCount = consideredInstallments.count { row ->
         !row.paid && (runCatching { LocalDate.parse(row.date, DateFmt) }.getOrNull()?.isBefore(LocalDate.now()) == true)
     }
-    val totalInstallments = debt.installments.size.takeIf { it > 0 } ?: debt.count
-    val paidInstallments = debt.installments.count { it.paid }
+    val totalInstallments = consideredInstallments.size.takeIf { it > 0 } ?: debt.count
+    val paidInstallments = consideredInstallments.count { it.paid }
     val hasOverdue = overdueCount > 0
     val baseViewConfiguration = LocalViewConfiguration.current
     val longPressViewConfiguration = remember(baseViewConfiguration) {
@@ -678,13 +699,30 @@ private fun DebtDetail(
     onEditName: () -> Unit,
     onAddAdvance: () -> Unit,
     onViewAdvanceReceipt: (Advance) -> Unit,
-    onDeleteAdvance: (Advance) -> Unit
+    onDeleteAdvance: (Advance) -> Unit,
+    allDebts: List<Debt>,
+    onSetInstallmentsExcluded: (Map<String, Set<String>>) -> Unit,
+    onToggleExcluded: (String, String, Boolean) -> Unit
 ) {
     var count by remember(debt.name) { mutableStateOf(if (debt.count == 0) "" else debt.count.toString()) }
     var amount by remember(debt.name) { mutableStateOf(if (debt.amount == 0L) "" else money(debt.amount)) }
     var date by remember(debt.name) { mutableStateOf(if (debt.startDate.isBlank()) LocalDate.now().format(DateFmt) else debt.startDate) }
     var dateError by remember { mutableStateOf(false) }
     var showDebtConfiguration by remember(debt.name) { mutableStateOf(true) }
+    var showExcludeDebtsDialog by remember(debt.name) { mutableStateOf(false) }
+    var selectedDebtsForExclusion by remember(debt.name) { mutableStateOf<Set<String>>(emptySet()) }
+    var currentTime by remember(debt.name) { mutableStateOf(LocalDateTime.now()) }
+    val eyeScale by animateFloatAsState(
+        targetValue = if (showDebtConfiguration) 1f else 0.08f,
+        animationSpec = tween(durationMillis = 240),
+        label = "debtConfigurationEye"
+    )
+    LaunchedEffect(debt.name) {
+        while (true) {
+            currentTime = LocalDateTime.now()
+            delay(1000)
+        }
+    }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -700,7 +738,15 @@ private fun DebtDetail(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Configuración de deuda", fontWeight = FontWeight.Bold, fontSize = 17.sp, modifier = Modifier.weight(1f))
                             IconButton(onClick = { showDebtConfiguration = !showDebtConfiguration }) {
-                                Text(if (showDebtConfiguration) "👁" else "👁̸", fontSize = 21.sp, color = Blue)
+                                Text(
+                                    "👁",
+                                    fontSize = 21.sp,
+                                    color = Blue,
+                                    modifier = Modifier.graphicsLayer {
+                                        scaleY = eyeScale
+                                        rotationZ = if (showDebtConfiguration) 0f else -8f
+                                    }
+                                )
                             }
                         }
                         if (showDebtConfiguration) {
@@ -723,6 +769,29 @@ private fun DebtDetail(
                             ) { Text("GUARDAR") }
                         }
                         Text("Deuda pendiente: S/ ${money(debt.pending)}", fontWeight = FontWeight.SemiBold)
+                        OutlinedButton(
+                            onClick = { selectedDebtsForExclusion = emptySet(); showExcludeDebtsDialog = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("DEUDAS NO A CONSIDERAR") }
+                        val excludedInstallments = allDebts.flatMap { candidate ->
+                            candidate.installments.filter { it.excluded }.map { candidate to it }
+                        }
+                        if (excludedInstallments.isNotEmpty()) {
+                            Text("Cuotas no consideradas", color = Blue, fontWeight = FontWeight.Bold)
+                            excludedInstallments.forEach { (candidate, row) ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "${candidate.name} • Cuota ${row.number}",
+                                        modifier = Modifier.weight(1f),
+                                        color = Muted,
+                                        fontSize = 13.sp
+                                    )
+                                    TextButton(onClick = {
+                                        onToggleExcluded(candidate.name, row.id, false)
+                                    }) { Text("DESHACER") }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -734,7 +803,6 @@ private fun DebtDetail(
                             Text("S/ ${money(debt.advances.sumOf { it.amount })}", color = Blue, fontWeight = FontWeight.Bold)
                         }
                         Button(onClick = onAddAdvance, modifier = Modifier.fillMaxWidth()) { Text("REGISTRAR ADELANTO") }
-                        if (debt.advances.isEmpty()) Text("Todavía no hay adelantos registrados.", color = Muted, fontSize = 13.sp)
                         debt.advances.forEach { advance ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text("S/ ${money(advance.amount)}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
@@ -744,7 +812,6 @@ private fun DebtDetail(
                                 }
                             }
                         }
-                        Text("Saldo pendiente después de adelantos: S/ ${money(debt.pending)}", color = Blue, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -764,19 +831,95 @@ private fun DebtDetail(
                                 color = if (installment.paid) Color.Red else Ink)
                         }
                         val dueDate = runCatching { LocalDate.parse(installment.date, DateFmt) }.getOrNull()
-                        val overdue = !installment.paid && dueDate != null && dueDate.isBefore(LocalDate.now())
+                        val dueAt = dueDate?.atTime(23, 59, 59)
+                        val overdueSeconds = if (!installment.paid && !installment.excluded && dueAt != null && dueAt.isBefore(currentTime)) {
+                            Duration.between(dueAt, currentTime).seconds.coerceAtLeast(0L)
+                        } else null
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(installment.date, color = Muted, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            if (overdue) Text("VENCIDA", color = Color(0xFFFF4D5A), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            if (overdueSeconds != null) {
+                                Text(
+                                    "VENCIDA (hace ${formatElapsed(overdueSeconds)})",
+                                    color = Color(0xFFFF4D5A),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
                         if (installment.paid) {
                             Text("PAGADA", color = Color(0xFF55D68B), fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
                             if (installment.receipt != null) TextButton(onClick = { onViewReceipt(installment) }) { Text("VER COMPROBANTE") }
+                        } else if (installment.excluded) {
+                            Button(
+                                onClick = {},
+                                enabled = false,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    disabledContainerColor = Color(0xFF263943),
+                                    disabledContentColor = Muted
+                                )
+                            ) { Text("NO CONSIDERADO") }
                         } else {
                             Button(onClick = { onPay(installment) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
                                 Text("CANCELAR")
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+    if (showExcludeDebtsDialog) {
+        Dialog(
+            onDismissRequest = { showExcludeDebtsDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Card(
+                Modifier.fillMaxWidth(0.9f),
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, CyanBorder),
+                colors = CardDefaults.cardColors(containerColor = CardDark)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Deudas no a considerar", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Text("Selecciona las deudas que no se tomarán en cuenta.", color = Muted, fontSize = 13.sp)
+                    LazyColumn(Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(allDebts, key = { it.name }) { candidate ->
+                            val hasPendingInstallments = candidate.installments.any { !it.paid }
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Checkbox(
+                                    checked = candidate.name in selectedDebtsForExclusion,
+                                    onCheckedChange = { checked ->
+                                        selectedDebtsForExclusion = if (checked) {
+                                            selectedDebtsForExclusion + candidate.name
+                                        } else {
+                                            selectedDebtsForExclusion - candidate.name
+                                        }
+                                    },
+                                    enabled = hasPendingInstallments
+                                )
+                                Column {
+                                    Text(candidate.name, color = if (hasPendingInstallments) Ink else Muted)
+                                    Text(
+                                        if (hasPendingInstallments) "${candidate.installments.count { !it.paid && !it.excluded }} cuotas pendientes" else "Sin cuotas pendientes",
+                                        color = Muted,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { showExcludeDebtsDialog = false }) { Text("CANCELAR") }
+                        TextButton(onClick = {
+                            val selectedIds = allDebts.associate { candidate ->
+                                candidate.name to candidate.installments.filter { !it.paid }.map { it.id }.toSet()
+                            }.filterKeys { it in selectedDebtsForExclusion }
+                            onSetInstallmentsExcluded(selectedIds)
+                            selectedDebtsForExclusion = emptySet()
+                            showExcludeDebtsDialog = false
+                        }) { Text("OK") }
                     }
                 }
             }
@@ -956,6 +1099,14 @@ private fun LoadingScreen(progress: Float) {
     }
 }
 
+private fun formatElapsed(totalSeconds: Long): String {
+    val days = totalSeconds / 86400
+    val hours = (totalSeconds % 86400) / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return "${days} ${if (days == 1L) "día" else "días"}, ${hours} ${if (hours == 1L) "hora" else "horas"}, ${minutes} ${if (minutes == 1L) "minuto" else "minutos"} y ${seconds} ${if (seconds == 1L) "segundo" else "segundos"}
+}
+
 private fun generateInstallments(count: Int, amount: Long, startText: String): List<Installment> {
     val start = LocalDate.parse(startText, DateFmt)
     val originalDay = start.dayOfMonth
@@ -988,7 +1139,7 @@ private fun persistDebts(context: Context, debts: List<Debt>) {
         val rows = JSONArray()
         debt.installments.forEach { row ->
             rows.put(JSONObject().put("id", row.id).put("number", row.number).put("date", row.date)
-                .put("amount", row.amount).put("paid", row.paid).put("receipt", row.receipt))
+                .put("amount", row.amount).put("paid", row.paid).put("receipt", row.receipt).put("excluded", row.excluded))
         }
         d.put("installments", rows)
         val advances = JSONArray()
@@ -1010,7 +1161,8 @@ private fun loadDebts(context: Context): List<Debt> {
             val installments = (0 until rows.length()).map { j ->
                 val row = rows.getJSONObject(j)
                 Installment(row.getString("id"), row.getInt("number"), row.getString("date"),
-                    row.getLong("amount"), row.getBoolean("paid"), row.optString("receipt").takeIf { it.isNotBlank() && it != "null" })
+                    row.getLong("amount"), row.getBoolean("paid"), row.optString("receipt").takeIf { it.isNotBlank() && it != "null" },
+                    row.optBoolean("excluded", false))
             }
             val advancesJson = d.optJSONArray("advances") ?: JSONArray()
             val advances = (0 until advancesJson.length()).map { k ->
